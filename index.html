@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <script type="module" crossorigin src="/fundhome/assets/polyfills-CdJTnejR.js"></script>
+
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <title>FundHome - 基金管家</title>
+    <style>
+      #loading {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #fff;
+        z-index: 9999;
+      }
+      #loading .spinner {
+        width: 40px;
+        height: 40px;
+        border: 3px solid #f3f3f3;
+        border-top: 3px solid #1890ff;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+      }
+      @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+      }
+      #error-msg {
+        display: none;
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        padding: 20px;
+        background: #fff;
+        z-index: 10000;
+        overflow: auto;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      }
+      #error-msg h2 { color: #ff4d4f; margin-bottom: 10px; }
+      #error-msg pre { 
+        background: #f5f5f5; 
+        padding: 10px; 
+        border-radius: 4px; 
+        overflow-x: auto;
+        white-space: pre-wrap;
+        word-break: break-all;
+      }
+    </style>
+    <script>
+      // globalThis polyfill (iOS Safari < 14)
+      if (typeof globalThis === 'undefined') {
+        (function() {
+          var global = this || window || self || Function('return this')();
+          global.globalThis = global;
+        })();
+      }
+      // Promise.allSettled polyfill (iOS Safari < 14)
+      if (typeof Promise !== 'undefined' && !Promise.allSettled) {
+        Promise.allSettled = function(promises) {
+          return Promise.all(promises.map(function(p) {
+            return Promise.resolve(p).then(
+              function(value) { return { status: 'fulfilled', value: value }; },
+              function(reason) { return { status: 'rejected', reason: reason }; }
+            );
+          }));
+        };
+      }
+      // String.prototype.replaceAll polyfill (iOS Safari < 14)
+      if (typeof String !== 'undefined' && !String.prototype.replaceAll) {
+        String.prototype.replaceAll = function(searchValue, replaceValue) {
+          if (searchValue instanceof RegExp) {
+            if (!searchValue.global) {
+              throw new TypeError('replaceAll called with a non-global RegExp argument');
+            }
+            return this.replace(searchValue, replaceValue);
+          }
+          var escaped = String(searchValue).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          return this.replace(new RegExp(escaped, 'g'), replaceValue);
+        };
+      }
+    </script>
+    <script type="module" crossorigin src="/fundhome/assets/index-CFkS1-9W.js"></script>
+    <link rel="modulepreload" crossorigin href="/fundhome/assets/vendor-react-5OVRFpZX.js">
+    <link rel="modulepreload" crossorigin href="/fundhome/assets/vendor-query-CGdwOB-c.js">
+    <link rel="modulepreload" crossorigin href="/fundhome/assets/vendor-antd-CxyTGPsz.js">
+    <link rel="modulepreload" crossorigin href="/fundhome/assets/vendor-echarts-CDfGkPkg.js">
+    <link rel="stylesheet" crossorigin href="/fundhome/assets/index-CgY2R8mH.css">
+    <script type="module">import.meta.url;import("_").catch(()=>1);(async function*(){})().next();if(location.protocol!="file:"){window.__vite_is_modern_browser=true}</script>
+    <script type="module">!function(){if(window.__vite_is_modern_browser)return;console.warn("vite: loading legacy chunks, syntax error above and the same error below should be ignored");var e=document.getElementById("vite-legacy-polyfill"),n=document.createElement("script");n.src=e.src,n.onload=function(){System.import(document.getElementById('vite-legacy-entry').getAttribute('data-src'))},document.body.appendChild(n)}();</script>
+  </head>
+  <body>
+    <div id="loading">
+      <div class="spinner"></div>
+    </div>
+    <div id="error-msg">
+      <h2>加载失败</h2>
+      <p>请检查浏览器版本是否支持，或尝试刷新页面。</p>
+      <pre id="error-detail"></pre>
+    </div>
+    <div id="root"></div>
+    <script>
+      window.onerror = function(msg, url, line, col, error) {
+        document.getElementById('loading').style.display = 'none';
+        document.getElementById('error-msg').style.display = 'block';
+        document.getElementById('error-detail').textContent = 
+          '错误: ' + msg + '\n' +
+          '文件: ' + url + '\n' +
+          '行号: ' + line + '\n' +
+          '浏览器: ' + navigator.userAgent;
+        return true;
+      };
+      window.onunhandledrejection = function(event) {
+        document.getElementById('loading').style.display = 'none';
+        document.getElementById('error-msg').style.display = 'block';
+        document.getElementById('error-detail').textContent = 
+          'Promise错误: ' + (event.reason ? event.reason.message || event.reason : '未知错误') + '\n' +
+          '浏览器: ' + navigator.userAgent;
+      };
+    </script>
+    <script>
+      function hideLoading() {
+        var el = document.getElementById('loading');
+        if (el) el.style.display = 'none';
+      }
+
+      setTimeout(function() {
+        var root = document.getElementById('root');
+        if (root && root.children.length > 0) {
+          hideLoading();
+        }
+      }, 1000);
+
+      setTimeout(function() {
+        hideLoading();
+      }, 5000);
+    </script>
+    <script nomodule>!function(){var e=document,t=e.createElement("script");if(!("noModule"in t)&&"onbeforeload"in t){var n=!1;e.addEventListener("beforeload",(function(e){if(e.target===t)n=!0;else if(!e.target.hasAttribute("nomodule")||!n)return;e.preventDefault()}),!0),t.type="module",t.src=".",e.head.appendChild(t),t.remove()}}();</script>
+    <script nomodule crossorigin id="vite-legacy-polyfill" src="/fundhome/assets/polyfills-legacy-4iMlGuCM.js"></script>
+    <script nomodule crossorigin id="vite-legacy-entry" data-src="/fundhome/assets/index-legacy-eww-olrw.js">System.import(document.getElementById('vite-legacy-entry').getAttribute('data-src'))</script>
+  </body>
+</html>
