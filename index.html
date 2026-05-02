@@ -9,6 +9,18 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <title>FundHome - 基金管家</title>
+    <script>
+      (function() {
+        var params = new URLSearchParams(window.location.search);
+        var redirect = params.get('_redirect');
+        if (redirect) {
+          params.delete('_redirect');
+          var newSearch = params.toString();
+          var newUrl = redirect + (newSearch ? '?' + newSearch : '') + window.location.hash;
+          window.history.replaceState(null, '', newUrl);
+        }
+      })();
+    </script>
     <style>
       #loading {
         position: fixed;
@@ -90,10 +102,10 @@
         };
       }
     </script>
-    <script type="module" crossorigin src="/fundhome/assets/index-CFkS1-9W.js"></script>
+    <script type="module" crossorigin src="/fundhome/assets/index-Dtmw0IAJ.js"></script>
     <link rel="modulepreload" crossorigin href="/fundhome/assets/vendor-react-5OVRFpZX.js">
-    <link rel="modulepreload" crossorigin href="/fundhome/assets/vendor-query-CGdwOB-c.js">
-    <link rel="modulepreload" crossorigin href="/fundhome/assets/vendor-antd-CxyTGPsz.js">
+    <link rel="modulepreload" crossorigin href="/fundhome/assets/vendor-query-CRb1tz4S.js">
+    <link rel="modulepreload" crossorigin href="/fundhome/assets/vendor-antd-1jE70Kzv.js">
     <link rel="modulepreload" crossorigin href="/fundhome/assets/vendor-echarts-CDfGkPkg.js">
     <link rel="stylesheet" crossorigin href="/fundhome/assets/index-CgY2R8mH.css">
     <script type="module">import.meta.url;import("_").catch(()=>1);(async function*(){})().next();if(location.protocol!="file:"){window.__vite_is_modern_browser=true}</script>
@@ -147,6 +159,6 @@
     </script>
     <script nomodule>!function(){var e=document,t=e.createElement("script");if(!("noModule"in t)&&"onbeforeload"in t){var n=!1;e.addEventListener("beforeload",(function(e){if(e.target===t)n=!0;else if(!e.target.hasAttribute("nomodule")||!n)return;e.preventDefault()}),!0),t.type="module",t.src=".",e.head.appendChild(t),t.remove()}}();</script>
     <script nomodule crossorigin id="vite-legacy-polyfill" src="/fundhome/assets/polyfills-legacy-4iMlGuCM.js"></script>
-    <script nomodule crossorigin id="vite-legacy-entry" data-src="/fundhome/assets/index-legacy-eww-olrw.js">System.import(document.getElementById('vite-legacy-entry').getAttribute('data-src'))</script>
+    <script nomodule crossorigin id="vite-legacy-entry" data-src="/fundhome/assets/index-legacy-ClZoYnoa.js">System.import(document.getElementById('vite-legacy-entry').getAttribute('data-src'))</script>
   </body>
 </html>

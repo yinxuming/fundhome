@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FundHome - 基金管家</title>
+  <script>
+    var l = window.location;
+    var path = l.pathname;
+    var search = l.search;
+    var hash = l.hash;
+    var redirect = path + search + hash;
+    l.replace(l.origin + '/fundhome/?_redirect=' + encodeURIComponent(redirect));
+  </script>
+</head>
+<body>
+  <p>正在跳转... <a href="/fundhome/">点击这里</a></p>
+</body>
+</html>
