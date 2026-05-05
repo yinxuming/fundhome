@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>kf_rank JSONP 接口测试</title>
+<style>
+body { font-family: monospace; padding: 20px; background: #1a1a2e; color: #e0e0e0; }
+button { padding: 8px 16px; margin: 4px; cursor: pointer; background: #0f3460; color: #e0e0e0; border: 1px solid #533483; border-radius: 4px; }
+button:hover { background: #533483; }
+#log { white-space: pre-wrap; background: #16213e; padding: 12px; border-radius: 4px; max-height: 600px; overflow-y: auto; margin-top: 12px; font-size: 13px; }
+.success { color: #4ecca3; }
+.error { color: #ff6b6b; }
+.info { color: #48bfe3; }
+</style>
+</head>
+<body>
+<h2>kf_rank JSONP 接口测试</h2>
+<div>
+  <button onclick="testJsonp()">1. JSONP 请求测试 (pn=50)</button>
+  <button onclick="testJsonpLarge()">2. JSONP 大分页测试 (pn=10000)</button>
+  <button onclick="testFetch()">3. Fetch 请求测试 (带 Referer)</button>
+  <button onclick="testFetchNoReferer()">4. Fetch 请求测试 (不带 Referer)</button>
+  <button onclick="testParse()">5. 解析逻辑测试 (Mock数据)</button>
+  <button onclick="clearLog()">清空日志</button>
+</div>
+<div id="log"></div>
+
+<script>
+function log(msg, type = '') {
+  const el = document.getElementById('log');
+  const span = document.createElement('span');
+  span.className = type;
+  span.textContent = msg + '\n';
+  el.appendChild(span);
+  el.scrollTop = el.scrollHeight;
+}
+
+function clearLog() {
+  document.getElementById('log').innerHTML = '';
+}
+
+function formatDate(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function testJsonp() {
+  log('=== JSONP 请求测试 (pn=50) ===', 'info');
+  const today = new Date();
+  const yesterday = new Date(today.getTime() - 86400000);
+  const ed = formatDate(today);
+  const sd = formatDate(yesterday);
+  const v = Math.random().toString().slice(2);
+  const url = `https://fund.eastmoney.com/data/rankhandler.aspx?op=ph&dt=kf&ft=all&sc=1nzf&st=desc&sd=${sd}&ed=${ed}&pi=1&pn=50&dx=1&v=${v}`;
+  log(`请求URL: ${url}`);
+
+  const script = document.createElement('script');
+  script.src = url;
+  script.async = true;
+
+  const timer = setTimeout(() => {
+    log('请求超时 (15秒)', 'error');
+    if (document.body.contains(script)) document.body.removeChild(script);
+    try { delete window.rankData; } catch {}
+  }, 15000);
+
+  script.onload = () => {
+    clearTimeout(timer);
+    if (document.body.contains(script)) document.body.removeChild(script);
+
+    const rankData = window.rankData;
+    if (!rankData) {
+      log('rankData 未定义！', 'error');
+      return;
+    }
+
+    log(`ErrCode: ${rankData.ErrCode}`, rankData.ErrCode === 0 ? 'success' : 'error');
+    if (rankData.ErrCode !== undefined && rankData.ErrCode !== 0) {
+      log(`错误信息: ${rankData.Data}`, 'error');
+    }
+    log(`allPages: ${rankData.allPages}`);
+    log(`allRecords: ${rankData.allRecords}`);
+
+    if (rankData.datas && Array.isArray(rankData.datas)) {
+      log(`数据条数: ${rankData.datas.length}`, 'success');
+      if (rankData.datas.length > 0) {
+        const first = rankData.datas[0];
+        log(`首条数据类型: ${typeof first}`);
+        const fields = first.split(',');
+        log(`字段数: ${fields.length}`);
+        log(`[0] 基金代码: ${fields[0]}`);
+        log(`[1] 基金名称: ${fields[1]}`);
+        log(`[3] 净值日期: ${fields[3]}`);
+        log(`[4] 单位净值: ${fields[4]}`);
+        log(`[6] 日涨幅: ${fields[6]}`);
+        log(`[7] 近1周: ${fields[7]}`);
+        log(`[8] 近1月: ${fields[8]}`);
+        log(`[9] 近3月: ${fields[9]}`);
+        log(`[10] 近6月: ${fields[10]}`);
+        log(`[11] 近1年: ${fields[11]}`);
+        log(`[12] 近2年: ${fields[12]}`);
+        log(`[13] 近3年: ${fields[13]}`);
+        log(`[14] 今年来: ${fields[14]}`);
+        log(`[15] 成立来: ${fields[15]}`);
+      }
+    } else {
+      log('datas 为空或非数组', 'error');
+    }
+
+    try { delete window.rankData; } catch {}
+  };
+
+  script.onerror = () => {
+    clearTimeout(timer);
+    log('Script 加载失败！', 'error');
+    if (document.body.contains(script)) document.body.removeChild(script);
+  };
+
+  document.body.appendChild(script);
+}
+
+function testJsonpLarge() {
+  log('=== JSONP 大分页测试 (pn=10000) ===', 'info');
+  const today = new Date();
+  const yesterday = new Date(today.getTime() - 86400000);
+  const ed = formatDate(today);
+  const sd = formatDate(yesterday);
+  const v = Math.random().toString().slice(2);
+  const url = `https://fund.eastmoney.com/data/rankhandler.aspx?op=ph&dt=kf&ft=all&sc=1nzf&st=desc&sd=${sd}&ed=${ed}&pi=1&pn=10000&dx=1&v=${v}`;
+  log(`请求URL: ${url}`);
+
+  const startTime = Date.now();
+  const script = document.createElement('script');
+  script.src = url;
+  script.async = true;
+
+  const timer = setTimeout(() => {
+    log('请求超时 (30秒)', 'error');
+    if (document.body.contains(script)) document.body.removeChild(script);
+    try { delete window.rankData; } catch {}
+  }, 30000);
+
+  script.onload = () => {
+    const elapsed = Date.now() - startTime;
+    clearTimeout(timer);
+    if (document.body.contains(script)) document.body.removeChild(script);
+
+    const rankData = window.rankData;
+    if (!rankData) {
+      log('rankData 未定义！', 'error');
+      return;
+    }
+
+    log(`耗时: ${elapsed}ms`, 'info');
+    log(`ErrCode: ${rankData.ErrCode}`, rankData.ErrCode === 0 ? 'success' : 'error');
+    log(`allPages: ${rankData.allPages}`);
+    log(`allRecords: ${rankData.allRecords}`);
+
+    if (rankData.datas && Array.isArray(rankData.datas)) {
+      log(`数据条数: ${rankData.datas.length}`, 'success');
+      if (rankData.datas.length > 0) {
+        const fields = rankData.datas[0].split(',');
+        log(`首条: ${fields[0]} ${fields[1]} 净值日期=${fields[3]} 近1周=${fields[7]} 今年来=${fields[14]}`);
+      }
+    }
+
+    try { delete window.rankData; } catch {}
+  };
+
+  script.onerror = () => {
+    clearTimeout(timer);
+    log('Script 加载失败！', 'error');
+    if (document.body.contains(script)) document.body.removeChild(script);
+  };
+
+  document.body.appendChild(script);
+}
+
+async function testFetch() {
+  log('=== Fetch 请求测试 (带 Referer) ===', 'info');
+  const today = new Date();
+  const yesterday = new Date(today.getTime() - 86400000);
+  const ed = formatDate(today);
+  const sd = formatDate(yesterday);
+  const url = `https://fund.eastmoney.com/data/rankhandler.aspx?op=ph&dt=kf&ft=all&sc=1nzf&st=desc&sd=${sd}&ed=${ed}&pi=1&pn=50&dx=1&v=0.123`;
+
+  try {
+    const resp = await fetch(url, {
+      headers: {
+        'Referer': 'https://fund.eastmoney.com/data/fundranking.html',
+      },
+    });
+    log(`状态码: ${resp.status} ${resp.statusText}`);
+    log(`Content-Type: ${resp.headers.get('content-type')}`);
+    const text = await resp.text();
+    log(`Content-Length: ${text.length}`);
+    if (text.length > 0) {
+      log(`前300字符: ${text.slice(0, 300)}`);
+    } else {
+      log('响应为空！', 'error');
+    }
+  } catch (e) {
+    log(`Fetch 错误: ${e.message}`, 'error');
+  }
+}
+
+async function testFetchNoReferer() {
+  log('=== Fetch 请求测试 (不带 Referer) ===', 'info');
+  const today = new Date();
+  const yesterday = new Date(today.getTime() - 86400000);
+  const ed = formatDate(today);
+  const sd = formatDate(yesterday);
+  const url = `https://fund.eastmoney.com/data/rankhandler.aspx?op=ph&dt=kf&ft=all&sc=1nzf&st=desc&sd=${sd}&ed=${ed}&pi=1&pn=50&dx=1&v=0.123`;
+
+  try {
+    const resp = await fetch(url);
+    log(`状态码: ${resp.status} ${resp.statusText}`);
+    const text = await resp.text();
+    log(`Content-Length: ${text.length}`);
+    if (text.length > 0) {
+      log(`前300字符: ${text.slice(0, 300)}`);
+    } else {
+      log('响应为空！', 'error');
+    }
+  } catch (e) {
+    log(`Fetch 错误: ${e.message}`, 'error');
+  }
+}
+
+function testParse() {
+  log('=== 解析逻辑测试 (Mock数据) ===', 'info');
+
+  const mockData = {
+    ErrCode: 0,
+    allPages: 1,
+    allRecords: 2,
+    datas: [
+      '000001,HXCZHH,华夏成长混合,HXCZHH,1.0320,1.0320,0.19,1.23,2.34,3.45,4.56,5.67,6.78,7.89,8.90,9.01,2026-05-04,',
+      '000011,HXPYHH,华夏平盈混合,HXPYHH,0.9880,0.9880,-0.10,-1.23,-2.34,-3.45,-4.56,-5.67,-6.78,-7.89,-8.90,-9.01,2026-05-04,',
+    ],
+  };
+
+  window.rankData = mockData;
+
+  const codeSet = new Set(['000001', '000011']);
+  const results = {};
+
+  for (const item of mockData.datas) {
+    const fields = item.split(',');
+    if (fields.length < 16) continue;
+    const fundCode = fields[0]?.trim();
+    if (!fundCode || !codeSet.has(fundCode)) continue;
+
+    results[fundCode] = {
+      fund_code: fundCode,
+      daily_change: parseFloat(fields[6]) || null,
+      week_change: parseFloat(fields[7]) || null,
+      month_change: parseFloat(fields[8]) || null,
+      month3_change: parseFloat(fields[9]) || null,
+      month6_change: parseFloat(fields[10]) || null,
+      year_change: parseFloat(fields[11]) || null,
+      year2_change: parseFloat(fields[12]) || null,
+      year3_change: parseFloat(fields[13]) || null,
+      ytd_change: parseFloat(fields[14]) || null,
+      since_inception_change: parseFloat(fields[15]) || null,
+      nav_date: fields[3]?.trim() ?? '',
+      latest_nav: parseFloat(fields[4]) || null,
+    };
+  }
+
+  log(`解析结果条数: ${Object.keys(results).length}`, 'success');
+  for (const [code, data] of Object.entries(results)) {
+    log(`${code}: 日涨幅=${data.daily_change}, 近1周=${data.week_change}, 今年来=${data.ytd_change}, 净值日期=${data.nav_date}`);
+  }
+
+  try { delete window.rankData; } catch {}
+}
+
+log('测试页面已加载，点击按钮开始测试', 'info');
+</script>
+</body>
+</html>
