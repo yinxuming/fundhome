@@ -96,9 +96,12 @@ jobs:
               print(f'Fetch failed: {e}', file=sys.stderr)
               sys.exit(1)
 
-          start = text.index('(')
-          end = text.rindex(')')
-          json_str = text[start+1:end]
+          if '(' in text and ')' in text:
+              start = text.index('(')
+              end = text.rindex(')')
+              json_str = text[start+1:end]
+          else:
+              json_str = text
           data = json.loads(json_str)
 
           if data.get('ErrCode') != 0:
