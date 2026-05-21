@@ -81,9 +81,14 @@ jobs:
         run: |
           mkdir -p data
           python3 << 'EOF'
-          import json, urllib.request, datetime, sys
+          import json, urllib.request, datetime, sys, zoneinfo
 
-          url = 'https://api.fund.eastmoney.com/ztjj/GetZTJJListNew?tt=0&dt=syl&st=D&_=' + str(int(datetime.datetime.now().timestamp() * 1000))
+          tz_bj = zoneinfo.ZoneInfo('Asia/Shanghai')
+          now_bj = datetime.datetime.now(tz_bj)
+          today = now_bj.date().isoformat()
+          now_str = now_bj.strftime('%Y-%m-%d %H:%M:%S')
+
+          url = 'https://api.fund.eastmoney.com/ztjj/GetZTJJListNew?tt=0&dt=syl&st=D&_=' + str(int(now_bj.timestamp() * 1000))
           req = urllib.request.Request(url, headers={
               'Referer': 'https://fund.eastmoney.com/',
               'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
@@ -113,9 +118,6 @@ jobs:
               print('No data returned', file=sys.stderr)
               sys.exit(1)
 
-          today = datetime.date.today().isoformat()
-          now_str = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-
           existing = {}
           try:
               with open('data/topic-cache.json') as f:
@@ -127,7 +129,7 @@ jobs:
           for item in items:
               name = item['INDEXNAME']
               code = item['INDEXCODE']
-              gain = item.get('D', 0)
+              gain = round(item.get('D', 0), 2)
 
               old_entry = existing.get(name, {})
               old_gains = old_entry.get('dailyGains', {}) if isinstance(old_entry, dict) else {}
