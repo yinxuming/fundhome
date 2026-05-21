@@ -26,7 +26,7 @@ jobs:
       - name: Check if today is a trading day
         id: trading-day
         run: |
-          python3 -c "
+          python3 << 'EOF'
           import datetime, sys
           today = datetime.date.today()
           if today.weekday() >= 5:
@@ -44,23 +44,24 @@ jobs:
               print('skip=true')
               sys.exit(0)
           print('skip=false')
-          "
+          EOF
 
       - name: Check if cache already updated today
         if: steps.trading-day.outputs.skip != 'true'
         id: check-cache
         run: |
           if [ -f "data/topic-cache.json" ]; then
-            cached_date=$(python3 -c "
-            import json, sys
-            with open('data/topic-cache.json') as f:
-                data = json.load(f)
-            for v in data.values():
-                if isinstance(v, dict) and 'date' in v:
-                    print(v['date'][:10])
-                    sys.exit(0)
-            print('')
-            ")
+            cached_date=$(python3 << 'EOF'
+          import json, sys
+          with open('data/topic-cache.json') as f:
+              data = json.load(f)
+          for v in data.values():
+              if isinstance(v, dict) and 'date' in v:
+                  print(v['date'][:10])
+                  sys.exit(0)
+          print('')
+          EOF
+          )
             today=$(date +%Y-%m-%d)
             if [ "$cached_date" = "$today" ]; then
               echo "already_updated=true" >> "$GITHUB_OUTPUT"
@@ -79,7 +80,7 @@ jobs:
         id: fetch-data
         run: |
           mkdir -p data
-          python3 -c "
+          python3 << 'EOF'
           import json, urllib.request, datetime, sys
 
           url = 'https://api.fund.eastmoney.com/ztjj/GetZTJJListNew?tt=0&dt=syl&st=D&_=' + str(int(datetime.datetime.now().timestamp() * 1000))
@@ -101,7 +102,7 @@ jobs:
           data = json.loads(json_str)
 
           if data.get('ErrCode') != 0:
-              print(f'API error: ErrCode={data.get(\"ErrCode\")}', file=sys.stderr)
+              print(f'API error: ErrCode={data.get("ErrCode")}', file=sys.stderr)
               sys.exit(1)
 
           items = data.get('Data', [])
@@ -146,7 +147,7 @@ jobs:
               json.dump(result, f, ensure_ascii=False, indent=2)
 
           print(f'Updated {len(result)} topics, date={now_str}')
-          "
+          EOF
           echo "data_updated=true" >> "$GITHUB_OUTPUT"
 
       - name: Commit and push if changed
