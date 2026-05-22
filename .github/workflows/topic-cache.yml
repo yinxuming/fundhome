@@ -2,8 +2,9 @@ name: Update Topic Cache
 
 on:
   schedule:
-    - cron: '30 8 * * 1-5'
-    - cron: '30 9 * * 1-5'
+    - cron: '37 8 * * 1-5'
+    - cron: '37 9 * * 1-5'
+    - cron: '37 10 * * 1-5'
   workflow_dispatch:
 
 permissions:
@@ -167,6 +168,24 @@ jobs:
             today=$(date +%Y-%m-%d)
             git commit -m "chore: update topic cache ${today}"
             git push
+          fi
+
+      - name: Keep alive
+        if: steps.trading-day.outputs.skip == 'true' || steps.check-cache.outputs.already_updated == 'true'
+        run: |
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          LAST_COMMIT_DATE=$(git log -1 --format=%cd --date=short)
+          TODAY=$(date +%Y-%m-%d)
+          if [ "$LAST_COMMIT_DATE" != "$TODAY" ]; then
+            echo "No commit today, creating keep-alive commit"
+            mkdir -p data
+            echo "${TODAY}" > data/.keep-alive
+            git add data/.keep-alive
+            git commit -m "chore: keep alive ${TODAY}"
+            git push
+          else
+            echo "Already have a commit today (${TODAY}), skipping keep-alive"
           fi
 
       - name: Setup Pages
