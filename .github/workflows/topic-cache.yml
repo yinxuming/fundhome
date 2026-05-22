@@ -47,29 +47,50 @@ jobs:
           print('skip=false')
           EOF
 
-      - name: Check if cache already updated today
+      - name: Check if cache already updated today after market close
         if: steps.trading-day.outputs.skip != 'true'
         id: check-cache
         run: |
           if [ -f "data/topic-cache.json" ]; then
-            cached_date=$(python3 << 'EOF'
-          import json, sys
+            result=$(python3 << 'EOF'
+          import json, sys, datetime, zoneinfo
           with open('data/topic-cache.json') as f:
               data = json.load(f)
           for v in data.values():
               if isinstance(v, dict) and 'date' in v:
-                  print(v['date'][:10])
+                  cached_str = v['date']
+                  try:
+                      cached_dt = datetime.datetime.strptime(cached_str, '%Y-%m-%d %H:%M:%S')
+                  except ValueError:
+                      print('invalid')
+                      sys.exit(0)
+                  tz_bj = zoneinfo.ZoneInfo('Asia/Shanghai')
+                  now_bj = datetime.datetime.now(tz_bj)
+                  today = now_bj.date()
+                  if cached_dt.date() != today:
+                      print('stale')
+                      sys.exit(0)
+                  if cached_dt.hour >= 15:
+                      print('closed')
+                      sys.exit(0)
+                  print('intraday')
                   sys.exit(0)
-          print('')
+          print('empty')
           EOF
           )
-            today=$(date +%Y-%m-%d)
-            if [ "$cached_date" = "$today" ]; then
+            echo "Cache status: $result"
+            if [ "$result" = "closed" ]; then
               echo "already_updated=true" >> "$GITHUB_OUTPUT"
-              echo "Cache already updated today: $cached_date"
+              echo "Cache is from today after market close, no need to update"
             else
               echo "already_updated=false" >> "$GITHUB_OUTPUT"
-              echo "Cache is from $cached_date, need update"
+              if [ "$result" = "intraday" ]; then
+                echo "Cache is from today but before market close, will refresh"
+              elif [ "$result" = "stale" ]; then
+                echo "Cache is from a previous day, will update"
+              else
+                echo "Cache date format invalid or empty, will update"
+              fi
             fi
           else
             echo "already_updated=false" >> "$GITHUB_OUTPUT"
