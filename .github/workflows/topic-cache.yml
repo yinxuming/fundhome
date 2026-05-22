@@ -3,8 +3,8 @@ name: Update Topic Cache
 on:
   schedule:
     - cron: '37 8 * * 1-5'
-    - cron: '37 9 * * 1-5'
-    - cron: '37 10 * * 1-5'
+    - cron: '38 9 * * 1-5'
+    - cron: '39 12 * * 1-5'
   workflow_dispatch:
 
 permissions:
