@@ -1,0 +1,321 @@
+name: Initialize Streak Rank (Manual)
+
+on:
+  workflow_dispatch:  # 只能手动触发
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: streak-rank-init
+  cancel-in-progress: false
+
+jobs:
+  init-streak-rank:
+    environment:
+      name: github-pages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Initialize streak rank data (last 20 trading days)
+        id: init-data
+        run: |
+          mkdir -p data
+          python3 << 'EOF'
+          import json, urllib.request, urllib.parse, sys, datetime, zoneinfo, os, re
+          from collections import defaultdict
+
+          tz_bj = zoneinfo.ZoneInfo('Asia/Shanghai')
+          now_bj = datetime.datetime.now(tz_bj)
+
+          # 2026 年节假日表
+          HOLIDAYS_2026 = {
+              '2026-01-01', '2026-01-02', '2026-01-03',
+              '2026-02-16', '2026-02-17', '2026-02-18', '2026-02-19', '2026-02-20',
+              '2026-04-04', '2026-04-05', '2026-04-06',
+              '2026-05-01', '2026-05-02', '2026-05-03', '2026-05-04', '2026-05-05',
+              '2026-05-30', '2026-05-31', '2026-06-01',
+              '2026-10-01', '2026-10-02', '2026-10-03', '2026-10-04', '2026-10-05', '2026-10-06', '2026-10-07',
+          }
+
+          def is_trade_date(d):
+              """判断是否为交易日（周末或节假日返回 false）"""
+              # Python weekday(): 0=周一, 5=周六, 6=周日
+              if d.weekday() >= 5:
+                  return False
+              if d.isoformat() in HOLIDAYS_2026:
+                  return False
+              return True
+
+          def get_previous_trade_date(ed):
+              """获取前一交易日"""
+              d = ed - datetime.timedelta(days=1)
+              while not is_trade_date(d):
+                  d -= datetime.timedelta(days=1)
+              return d
+
+          def hash_v(s):
+              """hash_v 函数（与 custom_rank 接口参数一致）"""
+              h = 0
+              for c in s:
+                  h = ((h << 5) - h) + ord(c)
+                  h &= 0xFFFFFFFF
+              return str(h)
+
+          def fetch_day_data(sd, ed):
+              """拉取指定交易日（sd, ed 区间，左开右闭）的所有基金涨幅数据"""
+              all_funds = {}
+              page = 1
+              page_size = 10000
+
+              while True:
+                  v = hash_v(ed + str(page))
+                  params = {
+                      'op': 'dy', 'dt': 'kf', 'ft': 'all', 'rs': '', 'gs': '0',
+                      'sc': 'qjzf', 'st': 'desc', 'sd': sd.isoformat(), 'ed': ed.isoformat(), 'es': '0',
+                      'qdii': '', 'pi': str(page), 'pn': str(page_size), 'dx': '0', 'v': v
+                  }
+                  url = 'https://fund.eastmoney.com/data/rankhandler.aspx?' + urllib.parse.urlencode(params)
+                  req = urllib.request.Request(url, headers={
+                      'Referer': 'https://fund.eastmoney.com/data/diyfundranking.html',
+                      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                  })
+                  try:
+                      with urllib.request.urlopen(req, timeout=30) as resp:
+                          text = resp.read().decode('utf-8')
+                  except Exception as e:
+                      print(f'Fetch failed ed={ed.isoformat()} page={page}: {e}', file=sys.stderr)
+                      break
+
+                  # 解析 datas 数组（非合法 JSON，需用正则提取）
+                  datas_match = re.search(r'datas:\s*(\[.*?\])\s*,\s*allRecords', text, re.DOTALL)
+                  if not datas_match:
+                      print(f'No datas array found ed={ed.isoformat()} page={page}', file=sys.stderr)
+                      break
+                  try:
+                      datas = json.loads(datas_match.group(1))
+                  except json.JSONDecodeError as e:
+                      print(f'datas array parse failed ed={ed.isoformat()} page={page}: {e}', file=sys.stderr)
+                      break
+
+                  if not datas:
+                      break
+
+                  all_records_match = re.search(r'allRecords:\s*(\d+)', text)
+                  all_records = int(all_records_match.group(1)) if all_records_match else 0
+
+                  for item in datas:
+                      fields = item.split(',')
+                      if len(fields) < 4:
+                          continue
+                      fund_code = fields[0].strip()
+                      fund_name = fields[1].strip() if len(fields) > 1 else ''
+                      range_gain_str = fields[3].strip() if len(fields) > 3 else ''
+                      nav_date = fields[9].strip() if len(fields) > 9 else ed.isoformat()
+
+                      if not fund_code:
+                          continue
+
+                      try:
+                          range_gain = float(range_gain_str) if range_gain_str else None
+                      except ValueError:
+                          range_gain = None
+
+                      all_funds[fund_code] = {
+                          'fund_code': fund_code,
+                          'fund_name': fund_name,
+                          'daily_gain': range_gain,
+                          'nav_date': nav_date,
+                      }
+
+                  if page * page_size >= all_records or len(datas) < page_size:
+                      break
+                  page += 1
+
+              return all_funds
+
+          # 回溯最近 20 个交易日
+          today = now_bj.date()
+          trade_dates = []
+          d = today - datetime.timedelta(days=1)
+          while len(trade_dates) < 20 and d > datetime.date(2026, 1, 1):
+              if is_trade_date(d):
+                  trade_dates.append(d)
+              d -= datetime.timedelta(days=1)
+
+          if not trade_dates:
+              print('No trade dates found in last 20 days', file=sys.stderr)
+              sys.exit(1)
+
+          # 按时间顺序排序（最早的先处理）
+          trade_dates.sort()
+          print(f'Will process {len(trade_dates)} trade dates: {trade_dates[0]} ~ {trade_dates[-1]}')
+
+          # 初始化连涨数据（空）
+          streak_data = {}
+
+          # 遍历每个交易日，更新连涨数据
+          for i, ed in enumerate(trade_dates):
+              # sd = 前一交易日（左开右闭区间）
+              if i == 0:
+                  # 第一个交易日：sd = ed 前一交易日（可能不在 20 个交易日列表中）
+                  sd = get_previous_trade_date(ed)
+              else:
+                  sd = trade_dates[i - 1]
+
+              print(f'Processing day {i+1}/{len(trade_dates)}: ed={ed.isoformat()}, sd={sd.isoformat()}')
+
+              day_funds = fetch_day_data(sd, ed)
+              print(f'  Fetched {len(day_funds)} funds')
+
+              # 更新连涨数据
+              for code, info in day_funds.items():
+                  daily_gain = info.get('daily_gain')
+                  fund_name = info.get('fund_name', '')
+
+                  if daily_gain is None or daily_gain <= 0:
+                      # 当日无数据或非上涨：从连涨列表移除
+                      if code in streak_data:
+                          del streak_data[code]
+                      continue
+
+                  if code in streak_data:
+                      # 已在连涨列表：天数+1，涨幅累加
+                      streak_data[code]['streak_days'] += 1
+                      streak_data[code]['streak_gain'] = round(streak_data[code]['streak_gain'] + daily_gain, 4)
+                      streak_data[code]['latest_daily_gain'] = round(daily_gain, 4)
+                      streak_data[code]['latest_nav_date'] = info.get('nav_date', ed.isoformat())
+                  else:
+                      # 新增：连涨天数=1
+                      streak_data[code] = {
+                          'fund_code': code,
+                          'fund_name': fund_name,
+                          'streak_days': 1,
+                          'streak_gain': round(daily_gain, 4),
+                          'latest_daily_gain': round(daily_gain, 4),
+                          'latest_nav_date': info.get('nav_date', ed.isoformat()),
+                      }
+
+              print(f'  After day {i+1}: {len(streak_data)} funds in streak list')
+
+          # 转换为列表
+          result_funds = list(streak_data.values())
+
+          # 按连涨天数降序，天数相同的按连涨涨幅降序
+          result_funds.sort(key=lambda x: (-x['streak_days'], -x['streak_gain']))
+
+          # 去重：同名基金只保留 C 类（前端 filterDuplicateFunds 逻辑）
+          # 优先级：C类人民币=0 > C类=1 > A/B类人民币=2 > A/B类=3 > A类人民币=4 > A类=5 > 其他=10
+          def get_base_fund_name(fund_name):
+              """提取基金基础名称（去掉份额类别和币种后缀）"""
+              CURRENCY = r'(?:人民币|美元|美元汇|美元现钞)'
+              base = fund_name
+              base = re.sub(r'[A-Z]类' + CURRENCY + r'$', '', base).strip()
+              base = re.sub(r'\(.+?\)[A-Z]' + CURRENCY + r'$', '', base).strip()
+              base = re.sub(r'[A-Z]\(' + CURRENCY + r'\)$', '', base).strip()
+              base = re.sub(r'\(.+?\)[A-Z]$', '', base).strip()
+              base = re.sub(r'\(.+?\)' + CURRENCY + r'[A-Z]$', '', base).strip()
+              base = re.sub(CURRENCY + r'[A-Z]$', '', base).strip()
+              patterns = [
+                  r'\(A/B\).*', r'A/B\(.*', r'A\(', r'B\(', r'C\(', r'D\(', r'E\(', r'F\(', r'H\(', r'I\(', r'R\(', r'Y\(',
+                  r'\(A\)', r'\(B\)', r'\(C\)', r'\(D\)', r'\(E\)', r'\(F\)', r'\(H\)', r'\(I\)', r'\(R\)', r'\(Y\)',
+                  r'A/B$', r'A$', r'B$', r'C$', r'D$', r'E$', r'F$', r'H$', r'I$', r'R$', r'Y$',
+              ]
+              for p in patterns:
+                  base = re.sub(p, '', base).strip()
+              base = re.sub(r'\(.+?\)$', '', base).strip()
+              return base
+
+          def fund_class_priority(fund_name):
+              """基金份额优先级（越小越高），C类优先"""
+              is_rmb = '人民币' in fund_name
+              is_usd = '美元' in fund_name
+              is_ab = bool(re.search(r'A/B|A\\B|\(A/B\)|\(A\\B\)', fund_name))
+
+              def has_class(letter):
+                  return bool(re.search(rf'{letter}[类(]|{letter}\((?:人民币|美元|美元汇|美元现钞)\)|(.+?){letter}(?:人民币|美元|美元汇|美元现钞)|(.+?){letter}$|(?:人民币|美元|美元汇|美元现钞){letter}$|(?<=[^a-zA-Z0-9]){letter}$', fund_name))
+
+              is_a = has_class('A') and not is_ab
+              is_c = has_class('C')
+              is_e = has_class('E')
+              is_d = has_class('D')
+
+              if is_c:
+                  return 0 if is_rmb else 10 if is_usd else 1
+              elif is_ab:
+                  return 2 if is_rmb else 10 if is_usd else 3
+              elif is_a:
+                  return 4 if is_rmb else 10 if is_usd else 5
+              elif is_e:
+                  return 6 if is_rmb else 10 if is_usd else 7
+              elif is_d:
+                  return 8 if is_rmb else 10 if is_usd else 9
+              return 10
+
+          def deduplicate_funds(funds):
+              """同名基金去重，每组只保留优先级最高的（C类优先）"""
+              groups = defaultdict(list)
+              for f in funds:
+                  base = get_base_fund_name(f['fund_name'])
+                  groups[base].append(f)
+
+              result = []
+              for base, group in groups.items():
+                  if len(group) == 1:
+                      result.append(group[0])
+                  else:
+                      # 按优先级排序，取最高的
+                      sorted_group = sorted(group, key=lambda x: fund_class_priority(x['fund_name']))
+                      result.append(sorted_group[0])
+              return result
+
+          deduped_funds = deduplicate_funds(result_funds)
+          print(f'After deduplication: {len(result_funds)} → {len(deduped_funds)} funds')
+
+          # 写入 JSON
+          result = {
+              'last_update': now_bj.strftime('%Y-%m-%d %H:%M:%S'),
+              'last_trade_date': trade_dates[-1].isoformat(),  # 最近一个交易日
+              'funds': deduped_funds,
+          }
+
+          with open('data/streak-rank.json', 'w', encoding='utf-8') as f:
+              json.dump(result, f, ensure_ascii=False, indent=2)
+
+          print(f'Initialized streak rank: {len(deduped_funds)} funds, last_trade_date={trade_dates[-1].isoformat()}')
+          EOF
+          echo "data_updated=true" >> "$GITHUB_OUTPUT"
+
+      - name: Commit and push
+        if: steps.init-data.outputs.data_updated == 'true'
+        run: |
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git add data/streak-rank.json
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            today=$(date +%Y-%m-%d)
+            git commit -m "chore: init streak rank ${today}"
+            git push
+          fi
+
+      - name: Setup Pages
+        if: steps.init-data.outputs.data_updated == 'true'
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - name: Upload artifact
+        if: steps.init-data.outputs.data_updated == 'true'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+
+      - name: Deploy to GitHub Pages
+        if: steps.init-data.outputs.data_updated == 'true'
+        id: deployment
+        uses: actions/deploy-pages@v4

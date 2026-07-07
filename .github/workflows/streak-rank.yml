@@ -241,10 +241,79 @@ jobs:
           # 按连涨天数降序，天数相同的按连涨涨幅降序
           result_funds.sort(key=lambda x: (-x['streak_days'], -x['streak_gain']))
 
+          # 去重：同名基金只保留 C 类（前端 filterDuplicateFunds 逻辑）
+          # 优先级：C类人民币=0 > C类=1 > A/B类人民币=2 > A/B类=3 > A类人民币=4 > A类=5 > 其他=10
+          def get_base_fund_name(fund_name):
+              """提取基金基础名称（去掉份额类别和币种后缀）"""
+              CURRENCY = r'(?:人民币|美元|美元汇|美元现钞)'
+              base = fund_name
+              base = re.sub(r'[A-Z]类' + CURRENCY + r'$', '', base).strip()
+              base = re.sub(r'\(.+?\)[A-Z]' + CURRENCY + r'$', '', base).strip()
+              base = re.sub(r'[A-Z]\(' + CURRENCY + r'\)$', '', base).strip()
+              base = re.sub(r'\(.+?\)[A-Z]$', '', base).strip()
+              base = re.sub(r'\(.+?\)' + CURRENCY + r'[A-Z]$', '', base).strip()
+              base = re.sub(CURRENCY + r'[A-Z]$', '', base).strip()
+              patterns = [
+                  r'\(A/B\).*', r'A/B\(.*', r'A\(', r'B\(', r'C\(', r'D\(', r'E\(', r'F\(', r'H\(', r'I\(', r'R\(', r'Y\(',
+                  r'\(A\)', r'\(B\)', r'\(C\)', r'\(D\)', r'\(E\)', r'\(F\)', r'\(H\)', r'\(I\)', r'\(R\)', r'\(Y\)',
+                  r'A/B$', r'A$', r'B$', r'C$', r'D$', r'E$', r'F$', r'H$', r'I$', r'R$', r'Y$',
+              ]
+              for p in patterns:
+                  base = re.sub(p, '', base).strip()
+              base = re.sub(r'\(.+?\)$', '', base).strip()
+              return base
+
+          def fund_class_priority(fund_name):
+              """基金份额优先级（越小越高），C类优先"""
+              is_rmb = '人民币' in fund_name
+              is_usd = '美元' in fund_name
+              is_ab = bool(re.search(r'A/B|A\\B|\(A/B\)|\(A\\B\)', fund_name))
+
+              def has_class(letter):
+                  return bool(re.search(rf'{letter}[类(]|{letter}\((?:人民币|美元|美元汇|美元现钞)\)|(.+?){letter}(?:人民币|美元|美元汇|美元现钞)|(.+?){letter}$|(?:人民币|美元|美元汇|美元现钞){letter}$|(?<=[^a-zA-Z0-9]){letter}$', fund_name))
+
+              is_a = has_class('A') and not is_ab
+              is_c = has_class('C')
+              is_e = has_class('E')
+              is_d = has_class('D')
+
+              if is_c:
+                  return 0 if is_rmb else 10 if is_usd else 1
+              elif is_ab:
+                  return 2 if is_rmb else 10 if is_usd else 3
+              elif is_a:
+                  return 4 if is_rmb else 10 if is_usd else 5
+              elif is_e:
+                  return 6 if is_rmb else 10 if is_usd else 7
+              elif is_d:
+                  return 8 if is_rmb else 10 if is_usd else 9
+              return 10
+
+          def deduplicate_funds(funds):
+              """同名基金去重，每组只保留优先级最高的（C类优先）"""
+              from collections import defaultdict
+              groups = defaultdict(list)
+              for f in funds:
+                  base = get_base_fund_name(f['fund_name'])
+                  groups[base].append(f)
+
+              result = []
+              for base, group in groups.items():
+                  if len(group) == 1:
+                      result.append(group[0])
+                  else:
+                      # 按优先级排序，取最高的
+                      sorted_group = sorted(group, key=lambda x: fund_class_priority(x['fund_name']))
+                      result.append(sorted_group[0])
+              return result
+
+          deduped_funds = deduplicate_funds(result_funds)
+          print(f'After deduplication: {len(result_funds)} → {len(deduped_funds)} funds')
+
           result = {
               'last_update': now_bj.strftime('%Y-%m-%d %H:%M:%S'),
               'last_trade_date': ed,
-              'funds': result_funds,
+              'funds': deduped_funds,
           }
 
           with open('data/streak-rank.json', 'w', encoding='utf-8') as f:
