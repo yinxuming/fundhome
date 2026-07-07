@@ -72,7 +72,7 @@ jobs:
               page_size = 10000
 
               while True:
-                  v = hash_v(ed + str(page))
+                  v = hash_v(ed.isoformat() + str(page))
                   params = {
                       'op': 'dy', 'dt': 'kf', 'ft': 'all', 'rs': '', 'gs': '0',
                       'sc': 'qjzf', 'st': 'desc', 'sd': sd.isoformat(), 'ed': ed.isoformat(), 'es': '0',
