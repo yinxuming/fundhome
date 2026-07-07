@@ -126,20 +126,24 @@ jobs:
                   print(f'Fetch failed page={page}: {e}', file=sys.stderr)
                   break
 
-              # 解析 var rankData = {...}
-              m = re.search(r'var rankData\s*=\s*(\{.*\})', text)
-              if not m:
-                  print(f'No rankData found page={page}', file=sys.stderr)
+              # ⚠️ 响应不是合法 JSON：字段名无引号（{datas:[...],allRecords:25580}）
+              # 不能用 json.loads 解析整个对象，需用正则单独提取 datas 数组和 allRecords
+              # datas 数组本身是合法 JSON 字符串数组（["...","..."]），可以直接 loads
+              datas_match = re.search(r'datas:\s*(\[.*?\])\s*,\s*allRecords', text, re.DOTALL)
+              if not datas_match:
+                  print(f'No datas array found page={page}', file=sys.stderr)
                   break
               try:
-                  data = json.loads(m.group(1))
+                  datas = json.loads(datas_match.group(1))
               except json.JSONDecodeError as e:
-                  print(f'JSON parse failed page={page}: {e}', file=sys.stderr)
+                  print(f'datas array parse failed page={page}: {e}', file=sys.stderr)
                   break
 
-              datas = data.get('datas', [])
               if not datas:
                   break
+
+              all_records_match = re.search(r'allRecords:\s*(\d+)', text)
+              all_records = int(all_records_match.group(1)) if all_records_match else 0
 
               for item in datas:
                   fields = item.split(',')
@@ -176,7 +180,6 @@ jobs:
                           'nav_date': nav_date,
                       }
 
-              all_records = data.get('allRecords', 0)
               if page * page_size >= all_records or len(datas) < page_size:
                   break
               page += 1
