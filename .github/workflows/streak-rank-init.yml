@@ -201,6 +201,12 @@ jobs:
 
               print(f'  After day {i+1}: {len(streak_data)} funds in streak list')
 
+              # 随机延迟 100-500ms，避免短时间内大量请求触发接口限流
+              import random, time
+              delay_ms = random.randint(100, 500)
+              time.sleep(delay_ms / 1000.0)
+              print(f'  Delay {delay_ms}ms before next day')
+
           # 转换为列表
           result_funds = list(streak_data.values())
 
