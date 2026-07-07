@@ -54,15 +54,20 @@ jobs:
               f.write(f'ed={ed.isoformat()}\n')
               f.write(f'sd={sd.isoformat()}\n')
 
-          # 检查是否已完成：streak-rank.json 的 last_trade_date == ed 则跳过
+          # 检查是否已完成：streak-rank.json 的 last_trade_date == ed 且 funds 非空则跳过
+          # 兜底：上次异常写入（last_trade_date 更新但 funds 空）时强制重试
           already_done = 'false'
           try:
               with open('data/streak-rank.json', encoding='utf-8') as f:
                   data = json.load(f)
               last_trade_date = data.get('last_trade_date', '')
-              if last_trade_date == ed.isoformat():
+              funds = data.get('funds', [])
+              if last_trade_date == ed.isoformat() and len(funds) > 0:
                   already_done = 'true'
-                  print(f'Already done: last_trade_date={last_trade_date} == ed={ed.isoformat()}, skip fetch')
+                  print(f'Already done: last_trade_date={last_trade_date} == ed={ed.isoformat()}, funds={len(funds)}, skip fetch')
+              elif last_trade_date == ed.isoformat() and len(funds) == 0:
+                  # 上次异常写入（last_trade_date 更新但 funds 空），强制重试
+                  print(f'Retry needed: last_trade_date={last_trade_date} == ed={ed.isoformat()} but funds is empty, will fetch')
               else:
                   print(f'Not done yet: last_trade_date={last_trade_date} != ed={ed.isoformat()}, will fetch')
           except FileNotFoundError:
@@ -185,6 +190,11 @@ jobs:
               page += 1
 
           print(f'Total funds fetched: {len(all_funds)}')
+
+          # 校验：只有成功获取数据才写入，否则视为失败跳过写入（下次重试）
+          if len(all_funds) == 0:
+              print('No funds fetched, skip write (will retry next run)', file=sys.stderr)
+              sys.exit(0)  # 正常退出但不写入，不触发 data_updated
 
           # 读取现有 streak-rank.json
           existing = {'last_update': '', 'last_trade_date': '', 'funds': []}
