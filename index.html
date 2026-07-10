@@ -10,6 +10,18 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <title>FundHome - 基金管家</title>
     <script>
+      // 提前根据 localStorage 主题设置背景色，避免移动端 CSS 异步加载导致白屏
+      (function() {
+        var theme = localStorage.getItem('fundhome_theme') || 'dark';
+        if (theme === 'dark') {
+          document.documentElement.style.background = '#141414';
+          document.documentElement.style.setProperty('--loading-bg', '#141414');
+          document.documentElement.style.setProperty('--loading-border', '#303030');
+          document.documentElement.style.setProperty('--loading-spinner', '#177ddc');
+        }
+      })();
+    </script>
+    <script>
       (function() {
         var params = new URLSearchParams(window.location.search);
         var redirect = params.get('_redirect');
@@ -31,14 +43,14 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        background: #fff;
+        background: var(--loading-bg, #fff);
         z-index: 9999;
       }
       #loading .spinner {
         width: 40px;
         height: 40px;
-        border: 3px solid #f3f3f3;
-        border-top: 3px solid #1890ff;
+        border: 3px solid var(--loading-border, #f3f3f3);
+        border-top: 3px solid var(--loading-spinner, #1890ff);
         border-radius: 50%;
         animation: spin 1s linear infinite;
       }
@@ -102,7 +114,7 @@
         };
       }
     </script>
-    <script type="module" crossorigin src="/fundhome/assets/index-CWvG4S5r.js"></script>
+    <script type="module" crossorigin src="/fundhome/assets/index-B59n1sfo.js"></script>
     <link rel="modulepreload" crossorigin href="/fundhome/assets/vendor-react-5OVRFpZX.js">
     <link rel="modulepreload" crossorigin href="/fundhome/assets/vendor-query-C1YsGFjD.js">
     <link rel="modulepreload" crossorigin href="/fundhome/assets/vendor-antd-BT4EbBDl.js">
@@ -159,6 +171,6 @@
     </script>
     <script nomodule>!function(){var e=document,t=e.createElement("script");if(!("noModule"in t)&&"onbeforeload"in t){var n=!1;e.addEventListener("beforeload",(function(e){if(e.target===t)n=!0;else if(!e.target.hasAttribute("nomodule")||!n)return;e.preventDefault()}),!0),t.type="module",t.src=".",e.head.appendChild(t),t.remove()}}();</script>
     <script nomodule crossorigin id="vite-legacy-polyfill" src="/fundhome/assets/polyfills-legacy-4iMlGuCM.js"></script>
-    <script nomodule crossorigin id="vite-legacy-entry" data-src="/fundhome/assets/index-legacy-IawIhoxC.js">System.import(document.getElementById('vite-legacy-entry').getAttribute('data-src'))</script>
+    <script nomodule crossorigin id="vite-legacy-entry" data-src="/fundhome/assets/index-legacy-BjNJSfDv.js">System.import(document.getElementById('vite-legacy-entry').getAttribute('data-src'))</script>
   </body>
 </html>
