@@ -320,20 +320,159 @@ jobs:
               json.dump(result, f, ensure_ascii=False, indent=2)
 
           print(f'Updated streak rank: {len(result_funds)} funds, last_trade_date={ed}')
+
+          # ========== 估值校准计算 ==========
+          # 利用连涨榜任务已获取的实际涨幅(all_funds)，获取 FundGuZhi 估算涨幅，
+          # 计算 EMA 校准系数(5日窗口, α=0.33)，保存为 calibration-ratio.json
+          # JSON 最小化：只存 fund_code → ratio 映射
+
+          # 1. 获取所有基金的估算涨幅（FundGuZhi 接口）
+          estimate_map = {}  # { fund_code: { 'estimate_growth': float, 'update_date': str, 'fund_name': str } }
+          est_page = 1
+          est_page_size = 10000
+          while True:
+              est_url = f'https://api.fund.eastmoney.com/FundGuZhi/GetFundGZList?type=1&sort=desc&orderType=desc&canbuy=0&pageIndex={est_page}&pageSize={est_page_size}'
+              est_req = urllib.request.Request(est_url, headers={
+                  'Referer': 'https://fund.eastmoney.com/',
+                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+              })
+              try:
+                  with urllib.request.urlopen(est_req, timeout=30) as resp:
+                      est_text = resp.read().decode('utf-8')
+              except Exception as e:
+                  print(f'FundGuZhi fetch failed page={est_page}: {e}', file=sys.stderr)
+                  break
+
+              try:
+                  est_data = json.loads(est_text)
+              except json.JSONDecodeError as e:
+                  print(f'FundGuZhi parse failed page={est_page}: {e}', file=sys.stderr)
+                  break
+
+              est_list = est_data.get('Data', {}).get('list', [])
+              est_total = est_data.get('TotalCount', 0)
+
+              if not est_list:
+                  break
+
+              for item in est_list:
+                  fc = str(item.get('bzdm', '')).strip()
+                  if not fc:
+                      continue
+                  gszzl = item.get('gszzl')
+                  gxrq = str(item.get('gxrq', '')).strip()[:10]
+                  jjjc = str(item.get('jjjc', '')).strip()
+                  try:
+                      est_growth = float(gszzl) if gszzl else None
+                  except (ValueError, TypeError):
+                      est_growth = None
+                  estimate_map[fc] = {
+                      'estimate_growth': est_growth,
+                      'update_date': gxrq,
+                      'fund_name': jjjc,
+                  }
+
+              if est_page * est_page_size >= est_total or len(est_list) < est_page_size:
+                  break
+              est_page += 1
+
+          print(f'FundGuZhi fetched: {len(estimate_map)} funds')
+
+          # 2. 读取现有 calibration-ratio.json 获取 prev_ema
+          prev_calibrations = {}
+          try:
+              with open('data/calibration-ratio.json', encoding='utf-8') as f:
+                  prev_data = json.load(f)
+              prev_calibrations = prev_data.get('funds', {})
+          except FileNotFoundError:
+              pass
+          except Exception as e:
+              print(f'Read existing calibration failed: {e}', file=sys.stderr)
+
+          # 3. 计算 EMA 校准系数
+          ALPHA = 0.33
+          new_calibrations = {}
+          matched_count = 0
+
+          for fc, est_info in estimate_map.items():
+              est_growth = est_info['estimate_growth']
+              est_date = est_info['update_date']
+              fund_name = est_info['fund_name']
+
+              # 从连涨榜数据获取实际涨幅
+              actual = all_funds.get(fc)
+              if not actual:
+                  continue
+              actual_growth = actual.get('daily_gain')
+              actual_date = actual.get('nav_date', ed)
+
+              # 日期必须匹配（估算日期 == 实际净值日期）
+              if not est_date or est_date != actual_date:
+                  continue
+              if est_growth is None or est_growth == 0 or actual_growth is None:
+                  continue
+
+              # 计算偏差比率
+              daily_ratio = actual_growth / est_growth
+              # 限制范围 [0.5, 5.0]：过滤极端异常值（如分红除权、数据错误），
+              # 保留极端行情（如重仓股涨停、行业突发利好导致估值更新延迟）
+              clamped_ratio = max(0.5, min(5.0, daily_ratio))
+
+              # EMA 递推
+              prev_ema = prev_calibrations.get(fc)
+              if prev_ema is None or prev_ema == 0:
+                  new_ratio = clamped_ratio
+              else:
+                  new_ratio = ALPHA * clamped_ratio + (1 - ALPHA) * prev_ema
+
+              new_calibrations[fc] = round(new_ratio, 4)
+              matched_count += 1
+
+          print(f'Calibration matched: {matched_count} funds (out of {len(estimate_map)} estimate, {len(all_funds)} actual)')
+
+          # 4. 去重：同名基金只保留 C 类（复用连涨榜去重逻辑）
+          # 构建带 fund_name 的列表用于去重
+          calib_with_name = []
+          for fc, ratio in new_calibrations.items():
+              name = estimate_map.get(fc, {}).get('fund_name', '')
+              calib_with_name.append({'fund_code': fc, 'fund_name': name, 'ratio': ratio})
+
+          deduped_calib = deduplicate_funds(calib_with_name)
+
+          # 转回 { fund_code: ratio } 格式
+          final_calibrations = {}
+          for item in deduped_calib:
+              final_calibrations[item['fund_code']] = item['ratio']
+
+          print(f'Calibration after dedup: {len(new_calibrations)} → {len(final_calibrations)} funds')
+
+          # 5. 保存 JSON（最小化格式：{ last_trade_date, funds: { code: ratio } }）
+          calib_result = {
+              'last_trade_date': ed,
+              'funds': final_calibrations,
+          }
+
+          with open('data/calibration-ratio.json', 'w', encoding='utf-8') as f:
+              json.dump(calib_result, f, ensure_ascii=False, separators=(',', ':'))
+
+          print(f'Updated calibration-ratio.json: {len(final_calibrations)} funds, last_trade_date={ed}')
+
+          # 检查 FundGuZhi 是否返回了有效估值数据
+          if len(estimate_map) == 0:
+              print('WARNING: FundGuZhi returned no estimate data at this time. calibration-ratio.json not updated with new data.', file=sys.stderr)
           EOF
-          echo "data_updated=true" >> "$GITHUB_OUTPUT"
 
       - name: Commit and push if changed
         if: steps.fetch-data.outputs.data_updated == 'true'
         run: |
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git config user.name "github-actions[bot]"
-          git add data/streak-rank.json
+          git add data/streak-rank.json data/calibration-ratio.json
           if git diff --staged --quiet; then
             echo "No changes to commit"
           else
             today=$(date +%Y-%m-%d)
-            git commit -m "chore: update streak rank ${today}"
+            git commit -m "chore: update streak rank and calibration ${today}"
             git push
           fi
 
