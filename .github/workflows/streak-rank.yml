@@ -391,15 +391,16 @@ jobs:
                   fc = str(item.get('bzdm', '')).strip()
                   if not fc:
                       continue
-                  gszzl = item.get('gszzl')  # 估算涨幅
-                  jzzzl = item.get('jzzzl')  # 实际涨幅（最新涨幅）
+                  gszzl = item.get('gszzl')  # 估算涨幅（百分比字符串，如 "-3.32%"）
+                  jzzzl = item.get('jzzzl')  # 实际涨幅（百分比字符串，如 "-3.25%"）
                   jjjc = str(item.get('jjjc', '')).strip()
                   try:
-                      est_growth = float(gszzl) if gszzl else None
+                      # FundGuZhi 返回带 % 号的百分比字符串，需先去除 % 再转 float
+                      est_growth = float(str(gszzl).replace('%', '').strip()) if gszzl else None
                   except (ValueError, TypeError):
                       est_growth = None
                   try:
-                      actual_growth = float(jzzzl) if jzzzl else None
+                      actual_growth = float(str(jzzzl).replace('%', '').strip()) if jzzzl else None
                   except (ValueError, TypeError):
                       actual_growth = None
                   estimate_map[fc] = {
