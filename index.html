@@ -114,7 +114,7 @@
         };
       }
     </script>
-    <script type="module" crossorigin src="/fundhome/assets/index-BwRbXIXw.js"></script>
+    <script type="module" crossorigin src="/fundhome/assets/index-CFysxGN0.js"></script>
     <link rel="modulepreload" crossorigin href="/fundhome/assets/vendor-react-5OVRFpZX.js">
     <link rel="modulepreload" crossorigin href="/fundhome/assets/vendor-query-C1YsGFjD.js">
     <link rel="modulepreload" crossorigin href="/fundhome/assets/vendor-antd-BT4EbBDl.js">
@@ -131,6 +131,7 @@
       <h2>加载失败</h2>
       <p>请检查浏览器版本是否支持，或尝试刷新页面。</p>
       <pre id="error-detail"></pre>
+      <button onclick="location.href = location.pathname + '?v=' + Date.now() + location.hash" style="margin-top: 15px; padding: 8px 20px; font-size: 16px; background: #1890ff; color: #fff; border: none; border-radius: 4px; cursor: pointer;">刷新重试</button>
     </div>
     <div id="root"></div>
     <script>
@@ -158,19 +159,31 @@
         if (el) el.style.display = 'none';
       }
 
-      setTimeout(function() {
+      function showTimeoutError() {
         var root = document.getElementById('root');
-        if (root && root.children.length > 0) {
-          hideLoading();
+        if (!root || root.children.length === 0) {
+          // React 未渲染，显示错误提示而非白屏
+          var loading = document.getElementById('loading');
+          if (loading) loading.style.display = 'none';
+          var err = document.getElementById('error-msg');
+          if (err) {
+            err.style.display = 'block';
+            var detail = document.getElementById('error-detail');
+            if (detail) {
+              detail.textContent =
+                '页面加载超时，JS 可能未成功执行。\n' +
+                '浏览器: ' + navigator.userAgent + '\n' +
+                '请尝试刷新页面，或清除浏览器缓存后重试。';
+            }
+          }
         }
-      }, 1000);
+      }
 
-      setTimeout(function() {
-        hideLoading();
-      }, 5000);
+      // 15 秒后检查 React 是否已渲染，未渲染则显示超时错误
+      setTimeout(showTimeoutError, 15000);
     </script>
     <script nomodule>!function(){var e=document,t=e.createElement("script");if(!("noModule"in t)&&"onbeforeload"in t){var n=!1;e.addEventListener("beforeload",(function(e){if(e.target===t)n=!0;else if(!e.target.hasAttribute("nomodule")||!n)return;e.preventDefault()}),!0),t.type="module",t.src=".",e.head.appendChild(t),t.remove()}}();</script>
     <script nomodule crossorigin id="vite-legacy-polyfill" src="/fundhome/assets/polyfills-legacy-4iMlGuCM.js"></script>
-    <script nomodule crossorigin id="vite-legacy-entry" data-src="/fundhome/assets/index-legacy-CU_wUyjg.js">System.import(document.getElementById('vite-legacy-entry').getAttribute('data-src'))</script>
+    <script nomodule crossorigin id="vite-legacy-entry" data-src="/fundhome/assets/index-legacy-RLAz9pos.js">System.import(document.getElementById('vite-legacy-entry').getAttribute('data-src'))</script>
   </body>
 </html>
