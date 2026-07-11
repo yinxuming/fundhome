@@ -322,12 +322,16 @@ jobs:
           print(f'Updated streak rank: {len(result_funds)} funds, last_trade_date={ed}')
 
           # ========== 估值校准计算 ==========
-          # 利用连涨榜任务已获取的实际涨幅(all_funds)，获取 FundGuZhi 估算涨幅，
+          # 调用 FundGuZhi 接口获取估算涨幅(gszzl)和实际涨幅(jzzzl)，
           # 计算 EMA 校准系数(5日窗口, α=0.33)，保存为 calibration-ratio.json
+          # FundGuZhi 接口同时返回估算和实际涨幅，无需交叉比对 all_funds
           # JSON 最小化：只存 fund_code → ratio 映射
 
-          # 1. 获取所有基金的估算涨幅（FundGuZhi 接口）
-          estimate_map = {}  # { fund_code: { 'estimate_growth': float, 'update_date': str, 'fund_name': str } }
+          # 1. 获取所有基金的估算涨幅和实际涨幅（FundGuZhi 接口）
+          # FundGuZhi 返回: gszzl(估算涨幅), jzzzl(实际涨幅), gzrq(估值日期), jjjc(基金简称)
+          # 注意: gzrq 和 gxrq 在 Data 层级，不在单个 item 中
+          estimate_map = {}  # { fund_code: { 'estimate_growth': float, 'actual_growth': float, 'fund_name': str } }
+          est_gzrq = ''  # 估值日期（所有基金共享，在 Data 层级）
           est_page = 1
           est_page_size = 10000
           while True:
@@ -349,8 +353,12 @@ jobs:
                   print(f'FundGuZhi parse failed page={est_page}: {e}', file=sys.stderr)
                   break
 
-              est_list = est_data.get('Data', {}).get('list', [])
+              est_data_obj = est_data.get('Data', {})
+              est_list = est_data_obj.get('list', [])
               est_total = est_data.get('TotalCount', 0)
+              # gzrq 在 Data 层级，所有基金共享同一估值日期
+              if not est_gzrq:
+                  est_gzrq = str(est_data_obj.get('gzrq', '')).strip()[:10]
 
               if not est_list:
                   break
@@ -359,16 +367,20 @@ jobs:
                   fc = str(item.get('bzdm', '')).strip()
                   if not fc:
                       continue
-                  gszzl = item.get('gszzl')
-                  gxrq = str(item.get('gxrq', '')).strip()[:10]
+                  gszzl = item.get('gszzl')  # 估算涨幅
+                  jzzzl = item.get('jzzzl')  # 实际涨幅（最新涨幅）
                   jjjc = str(item.get('jjjc', '')).strip()
                   try:
                       est_growth = float(gszzl) if gszzl else None
                   except (ValueError, TypeError):
                       est_growth = None
+                  try:
+                      actual_growth = float(jzzzl) if jzzzl else None
+                  except (ValueError, TypeError):
+                      actual_growth = None
                   estimate_map[fc] = {
                       'estimate_growth': est_growth,
-                      'update_date': gxrq,
+                      'actual_growth': actual_growth,
                       'fund_name': jjjc,
                   }
 
@@ -376,7 +388,7 @@ jobs:
                   break
               est_page += 1
 
-          print(f'FundGuZhi fetched: {len(estimate_map)} funds')
+          print(f'FundGuZhi fetched: {len(estimate_map)} funds, gzrq={est_gzrq}')
 
           # 2. 读取现有 calibration-ratio.json 获取 prev_ema
           prev_calibrations = {}
@@ -390,24 +402,20 @@ jobs:
               print(f'Read existing calibration failed: {e}', file=sys.stderr)
 
           # 3. 计算 EMA 校准系数
+          # 日期匹配：估值日期(gzrq) 必须等于上一交易日(ed)
+          # FundGuZhi 接口在非交易时间调用时，gzrq 应为上一交易日
           ALPHA = 0.33
           new_calibrations = {}
           matched_count = 0
 
-          for fc, est_info in estimate_map.items():
-              est_growth = est_info['estimate_growth']
-              est_date = est_info['update_date']
-              fund_name = est_info['fund_name']
+          for fc, info in estimate_map.items():
+              est_growth = info['estimate_growth']
+              actual_growth = info['actual_growth']
+              fund_name = info['fund_name']
 
-              # 从连涨榜数据获取实际涨幅
-              actual = all_funds.get(fc)
-              if not actual:
-                  continue
-              actual_growth = actual.get('daily_gain')
-              actual_date = actual.get('nav_date', ed)
-
-              # 日期必须匹配（估算日期 == 实际净值日期）
-              if not est_date or est_date != actual_date:
+              # 估值日期必须等于上一交易日
+              if not est_gzrq or est_gzrq != ed:
+                  # 日期不匹配，跳过（不计算新校准值，保留旧值）
                   continue
               if est_growth is None or est_growth == 0 or actual_growth is None:
                   continue
@@ -428,10 +436,16 @@ jobs:
               new_calibrations[fc] = round(new_ratio, 4)
               matched_count += 1
 
-          print(f'Calibration matched: {matched_count} funds (out of {len(estimate_map)} estimate, {len(all_funds)} actual)')
+          print(f'Calibration matched: {matched_count} funds (gzrq={est_gzrq}, ed={ed})')
+
+          # 如果日期不匹配（gzrq != ed），保留旧校准值
+          if est_gzrq != ed:
+              print(f'WARNING: gzrq({est_gzrq}) != ed({ed}), keeping previous calibration values', file=sys.stderr)
+              new_calibrations = prev_calibrations
+          elif matched_count == 0 and len(estimate_map) > 0:
+              print('WARNING: FundGuZhi returned data but no funds matched for calibration', file=sys.stderr)
 
           # 4. 去重：同名基金只保留 C 类（复用连涨榜去重逻辑）
-          # 构建带 fund_name 的列表用于去重
           calib_with_name = []
           for fc, ratio in new_calibrations.items():
               name = estimate_map.get(fc, {}).get('fund_name', '')
