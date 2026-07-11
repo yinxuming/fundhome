@@ -414,60 +414,63 @@ jobs:
 
           print(f'FundGuZhi fetched: {len(estimate_map)} funds, gzrq={est_gzrq}')
 
-          # 2. 读取现有 calibration-ratio.json 获取 prev_ema
+          # 2. 读取现有 calibration-ratio.json 获取 prev_ema 和上次校准日期
           prev_calibrations = {}
+          prev_last_trade_date = ''
           try:
               with open('data/calibration-ratio.json', encoding='utf-8') as f:
                   prev_data = json.load(f)
               prev_calibrations = prev_data.get('funds', {})
+              prev_last_trade_date = prev_data.get('last_trade_date', '')
           except FileNotFoundError:
               pass
           except Exception as e:
               print(f'Read existing calibration failed: {e}', file=sys.stderr)
 
           # 3. 计算 EMA 校准系数
-          # 日期匹配：估值日期(gzrq) 必须等于上一交易日(ed)
-          # FundGuZhi 接口在非交易时间调用时，gzrq 应为上一交易日
+          # 校准基于 FundGuZhi 返回的 gszzl(估算涨幅) 和 jzzzl(实际涨幅)，
+          # 两者对应同一天(gzrq)，无需与 ed(最新交易日) 匹配。
+          # 防重复保护：如果 est_gzrq == prev_last_trade_date，说明今天已校准过，保留旧值。
           ALPHA = 0.33
           new_calibrations = {}
           matched_count = 0
 
-          for fc, info in estimate_map.items():
-              est_growth = info['estimate_growth']
-              actual_growth = info['actual_growth']
-              fund_name = info['fund_name']
+          # 同一天不重复更新 EMA（避免多次运行导致 EMA 偏移）
+          already_calibrated_today = bool(est_gzrq) and bool(prev_calibrations) and (est_gzrq == prev_last_trade_date)
 
-              # 估值日期必须等于上一交易日
-              if not est_gzrq or est_gzrq != ed.isoformat():
-                  # 日期不匹配，跳过（不计算新校准值，保留旧值）
-                  continue
-              if est_growth is None or est_growth == 0 or actual_growth is None:
-                  continue
-
-              # 计算偏差比率
-              daily_ratio = actual_growth / est_growth
-              # 限制范围 [0.5, 5.0]：过滤极端异常值（如分红除权、数据错误），
-              # 保留极端行情（如重仓股涨停、行业突发利好导致估值更新延迟）
-              clamped_ratio = max(0.5, min(5.0, daily_ratio))
-
-              # EMA 递推
-              prev_ema = prev_calibrations.get(fc)
-              if prev_ema is None or prev_ema == 0:
-                  new_ratio = clamped_ratio
-              else:
-                  new_ratio = ALPHA * clamped_ratio + (1 - ALPHA) * prev_ema
-
-              new_calibrations[fc] = round(new_ratio, 4)
-              matched_count += 1
-
-          print(f'Calibration matched: {matched_count} funds (gzrq={est_gzrq}, ed={ed})')
-
-          # 如果日期不匹配（gzrq != ed），保留旧校准值
-          if est_gzrq != ed.isoformat():
-              print(f'WARNING: gzrq({est_gzrq}) != ed({ed.isoformat()}), keeping previous calibration values', file=sys.stderr)
+          if already_calibrated_today:
+              print(f'Calibration already done for gzrq={est_gzrq}, keeping previous {len(prev_calibrations)} values')
               new_calibrations = prev_calibrations
-          elif matched_count == 0 and len(estimate_map) > 0:
-              print('WARNING: FundGuZhi returned data but no funds matched for calibration', file=sys.stderr)
+          else:
+              for fc, info in estimate_map.items():
+                  est_growth = info['estimate_growth']
+                  actual_growth = info['actual_growth']
+                  fund_name = info['fund_name']
+
+                  if est_growth is None or est_growth == 0 or actual_growth is None:
+                      continue
+
+                  # 计算偏差比率
+                  daily_ratio = actual_growth / est_growth
+                  # 限制范围 [0.5, 5.0]：过滤极端异常值（如分红除权、数据错误），
+                  # 保留极端行情（如重仓股涨停、行业突发利好导致估值更新延迟）
+                  clamped_ratio = max(0.5, min(5.0, daily_ratio))
+
+                  # EMA 递推
+                  prev_ema = prev_calibrations.get(fc)
+                  if prev_ema is None or prev_ema == 0:
+                      new_ratio = clamped_ratio
+                  else:
+                      new_ratio = ALPHA * clamped_ratio + (1 - ALPHA) * prev_ema
+
+                  new_calibrations[fc] = round(new_ratio, 4)
+                  matched_count += 1
+
+              print(f'Calibration matched: {matched_count} funds (gzrq={est_gzrq})')
+
+              if matched_count == 0 and len(estimate_map) > 0:
+                  print('WARNING: FundGuZhi returned data but no funds matched for calibration', file=sys.stderr)
+                  new_calibrations = prev_calibrations
 
           # 4. 去重：同名基金只保留 C 类（复用连涨榜去重逻辑）
           calib_with_name = []
@@ -485,15 +488,16 @@ jobs:
           print(f'Calibration after dedup: {len(new_calibrations)} → {len(final_calibrations)} funds')
 
           # 5. 保存 JSON（最小化格式：{ last_trade_date, funds: { code: ratio } }）
+          # last_trade_date 使用 est_gzrq（估值日期），表示校准数据基于哪一天的 gszzl/jzzzl
           calib_result = {
-              'last_trade_date': ed,
+              'last_trade_date': est_gzrq,
               'funds': final_calibrations,
           }
 
           with open('data/calibration-ratio.json', 'w', encoding='utf-8') as f:
               json.dump(calib_result, f, ensure_ascii=False, separators=(',', ':'))
 
-          print(f'Updated calibration-ratio.json: {len(final_calibrations)} funds, last_trade_date={ed}')
+          print(f'Updated calibration-ratio.json: {len(final_calibrations)} funds, last_trade_date={est_gzrq}')
 
           # 检查 FundGuZhi 是否返回了有效估值数据
           if len(estimate_map) == 0:
