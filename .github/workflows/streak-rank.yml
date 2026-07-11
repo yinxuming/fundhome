@@ -438,7 +438,7 @@ jobs:
               fund_name = info['fund_name']
 
               # 估值日期必须等于上一交易日
-              if not est_gzrq or est_gzrq != ed:
+              if not est_gzrq or est_gzrq != ed.isoformat():
                   # 日期不匹配，跳过（不计算新校准值，保留旧值）
                   continue
               if est_growth is None or est_growth == 0 or actual_growth is None:
@@ -463,8 +463,8 @@ jobs:
           print(f'Calibration matched: {matched_count} funds (gzrq={est_gzrq}, ed={ed})')
 
           # 如果日期不匹配（gzrq != ed），保留旧校准值
-          if est_gzrq != ed:
-              print(f'WARNING: gzrq({est_gzrq}) != ed({ed}), keeping previous calibration values', file=sys.stderr)
+          if est_gzrq != ed.isoformat():
+              print(f'WARNING: gzrq({est_gzrq}) != ed({ed.isoformat()}), keeping previous calibration values', file=sys.stderr)
               new_calibrations = prev_calibrations
           elif matched_count == 0 and len(estimate_map) > 0:
               print('WARNING: FundGuZhi returned data but no funds matched for calibration', file=sys.stderr)
