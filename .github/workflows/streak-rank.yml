@@ -54,26 +54,50 @@ jobs:
               f.write(f'ed={ed.isoformat()}\n')
               f.write(f'sd={sd.isoformat()}\n')
 
-          # 检查是否已完成：streak-rank.json 的 last_trade_date == ed 且 funds 非空则跳过
-          # 兜底：上次异常写入（last_trade_date 更新但 funds 空）时强制重试
+          # 检查是否已完成：streak-rank.json 和 calibration-ratio.json 都需要更新到 ed
+          # 只有两者都已完成（last_trade_date == ed 且数据非空）才跳过
+          # 兜底：上次异常写入（last_trade_date 更新但数据空）时强制重试
           already_done = 'false'
+          streak_done = False
+          calib_done = False
+
           try:
               with open('data/streak-rank.json', encoding='utf-8') as f:
                   data = json.load(f)
               last_trade_date = data.get('last_trade_date', '')
               funds = data.get('funds', [])
               if last_trade_date == ed.isoformat() and len(funds) > 0:
-                  already_done = 'true'
-                  print(f'Already done: last_trade_date={last_trade_date} == ed={ed.isoformat()}, funds={len(funds)}, skip fetch')
+                  streak_done = True
+                  print(f'Streak rank done: last_trade_date={last_trade_date}, funds={len(funds)}')
               elif last_trade_date == ed.isoformat() and len(funds) == 0:
-                  # 上次异常写入（last_trade_date 更新但 funds 空），强制重试
-                  print(f'Retry needed: last_trade_date={last_trade_date} == ed={ed.isoformat()} but funds is empty, will fetch')
+                  print(f'Streak rank retry needed: last_trade_date={last_trade_date} but funds empty')
               else:
-                  print(f'Not done yet: last_trade_date={last_trade_date} != ed={ed.isoformat()}, will fetch')
+                  print(f'Streak rank not done: last_trade_date={last_trade_date} != ed={ed.isoformat()}')
           except FileNotFoundError:
-              print('No existing streak-rank.json, will fetch')
+              print('No existing streak-rank.json')
           except Exception as e:
-              print(f'Check failed: {e}, will fetch')
+              print(f'Streak rank check failed: {e}')
+
+          try:
+              with open('data/calibration-ratio.json', encoding='utf-8') as f:
+                  data = json.load(f)
+              last_trade_date = data.get('last_trade_date', '')
+              funds = data.get('funds', {})
+              if last_trade_date == ed.isoformat() and len(funds) > 0:
+                  calib_done = True
+                  print(f'Calibration done: last_trade_date={last_trade_date}, funds={len(funds)}')
+              elif last_trade_date == ed.isoformat() and len(funds) == 0:
+                  print(f'Calibration retry needed: last_trade_date={last_trade_date} but funds empty')
+              else:
+                  print(f'Calibration not done: last_trade_date={last_trade_date} != ed={ed.isoformat()}')
+          except FileNotFoundError:
+              print('No existing calibration-ratio.json')
+          except Exception as e:
+              print(f'Calibration check failed: {e}')
+
+          if streak_done and calib_done:
+              already_done = 'true'
+              print('Both streak-rank and calibration are up-to-date, skip fetch')
 
           with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
               f.write(f'already_done={already_done}\n')
