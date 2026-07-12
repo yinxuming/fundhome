@@ -503,6 +503,10 @@ jobs:
           # 检查 FundGuZhi 是否返回了有效估值数据
           if len(estimate_map) == 0:
               print('WARNING: FundGuZhi returned no estimate data at this time. calibration-ratio.json not updated with new data.', file=sys.stderr)
+
+          # 标记数据已更新，触发 commit 和 deploy 步骤
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write('data_updated=true\n')
           EOF
 
       - name: Commit and push if changed
