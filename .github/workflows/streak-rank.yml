@@ -435,6 +435,7 @@ jobs:
           ALPHA = 0.33
           new_calibrations = {}
           matched_count = 0
+          skipped_opposite = 0
 
           # 同一天不重复更新 EMA（避免多次运行导致 EMA 偏移）
           already_calibrated_today = bool(est_gzrq) and bool(prev_calibrations) and (est_gzrq == prev_last_trade_date)
@@ -443,6 +444,15 @@ jobs:
               print(f'Calibration already done for gzrq={est_gzrq}, keeping previous {len(prev_calibrations)} values')
               new_calibrations = prev_calibrations
           else:
+              # 一次性重置：prev_ema > 2.0 的基金重置为 1.0（异常值无法通过 EMA 自然恢复）
+              reset_count = 0
+              for fc in list(prev_calibrations.keys()):
+                  if prev_calibrations[fc] > 2.0:
+                      prev_calibrations[fc] = 1.0
+                      reset_count += 1
+              if reset_count > 0:
+                  print(f'Calibration reset: {reset_count} funds with ratio>2.0 reset to 1.0')
+
               for fc, info in estimate_map.items():
                   est_growth = info['estimate_growth']
                   actual_growth = info['actual_growth']
@@ -451,11 +461,20 @@ jobs:
                   if est_growth is None or est_growth == 0 or actual_growth is None:
                       continue
 
+                  # 方向相反时跳过 EMA 更新（估值+但实际-，或估值-但实际+）
+                  # 方向相反说明估值模型完全失效，daily_ratio 不反映真实校准关系
+                  if (est_growth > 0 and actual_growth < 0) or (est_growth < 0 and actual_growth > 0):
+                      skipped_opposite += 1
+                      # 保留 prev_ema 不更新
+                      if fc in prev_calibrations:
+                          new_calibrations[fc] = prev_calibrations[fc]
+                      continue
+
                   # 计算偏差比率
                   daily_ratio = actual_growth / est_growth
-                  # 限制范围 [0.5, 5.0]：过滤极端异常值（如分红除权、数据错误），
-                  # 保留极端行情（如重仓股涨停、行业突发利好导致估值更新延迟）
-                  clamped_ratio = max(0.5, min(5.0, daily_ratio))
+                  # 限制范围 [0.5, 2.0]：过滤极端异常值（如分红除权、数据错误），
+                  # 收紧上限从 5.0 到 2.0，防止极端值累积导致 EMA 失控
+                  clamped_ratio = max(0.5, min(2.0, daily_ratio))
 
                   # EMA 递推
                   prev_ema = prev_calibrations.get(fc)
@@ -467,7 +486,7 @@ jobs:
                   new_calibrations[fc] = round(new_ratio, 4)
                   matched_count += 1
 
-              print(f'Calibration matched: {matched_count} funds (gzrq={est_gzrq})')
+              print(f'Calibration matched: {matched_count} funds, skipped_opposite: {skipped_opposite} (gzrq={est_gzrq})')
 
               if matched_count == 0 and len(estimate_map) > 0:
                   print('WARNING: FundGuZhi returned data but no funds matched for calibration', file=sys.stderr)
