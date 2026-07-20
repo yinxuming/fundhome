@@ -24,6 +24,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0  # 拉取完整历史，便于 git pull
+
+      # 关键修复：actions/checkout 在 schedule 触发时拉取的是 workflow run 创建时的 commit SHA，
+      # 而不是执行时的最新 commit。concurrency group 排队等待时，前一个 run 可能已经 commit，
+      # 但当前 run 的 checkout 仍然是旧的，导致 already_done 检查失效，重复 fetch 并累加 streak_days。
+      # 解决方案：checkout 后立即 git pull，确保拿到最新代码。
+      - name: Pull latest changes
+        run: |
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git pull --rebase origin main || echo "git pull failed (maybe no upstream or conflict), continue with checkout state"
 
       - name: Get latest trade date and check if already done
         id: check
@@ -230,37 +242,67 @@ jobs:
           except Exception as e:
               print(f'Read existing failed: {e}', file=sys.stderr)
 
+          # 防御性检查：如果 existing.last_trade_date == ed 且 funds 非空，
+          # 说明今天已经更新过（可能是 git pull 后发现 already_done，或并发执行导致 checkout 旧代码），
+          # 跳过 streak_days 累加，直接复用 existing.funds，避免重复累加。
+          # 注意：仍然继续执行 calibration-ratio.json 的更新（calibration 有独立的 already_calibrated_today 检查）。
+          skip_streak_update = (
+              existing.get('last_trade_date') == ed
+              and len(existing.get('funds', [])) > 0
+          )
+          if skip_streak_update:
+              print(f'Defensive check: streak-rank already updated for ed={ed} (last_trade_date={existing.get("last_trade_date")}, funds={len(existing.get("funds", []))}), skip streak_days accumulation')
+
           existing_map = {f['fund_code']: f for f in existing.get('funds', [])}
 
           # 更新连涨数据
           result_funds = []
-          for code, info in all_funds.items():
-              daily_gain = info.get('daily_gain')
-              fund_name = info.get('fund_name', '')
-              nav_date = info.get('nav_date', ed)
+          if skip_streak_update:
+              # 防御性检查命中：直接复用 existing.funds，不累加 streak_days
+              # 但需要用本次 fetch 的 latest_daily_gain 和 latest_nav_date 更新（保持数据新鲜）
+              for old_item in existing.get('funds', []):
+                  code = old_item.get('fund_code', '')
+                  new_info = all_funds.get(code, {})
+                  daily_gain = new_info.get('daily_gain')
+                  # 当日非上涨则从连涨列表移除（end streak）
+                  if daily_gain is None or daily_gain <= 0:
+                      continue
+                  result_funds.append({
+                      'fund_code': code,
+                      'fund_name': old_item.get('fund_name', new_info.get('fund_name', '')),
+                      'streak_days': old_item.get('streak_days', 1),
+                      'streak_gain': old_item.get('streak_gain', 0),
+                      'latest_daily_gain': round(daily_gain, 4),
+                      'latest_nav_date': new_info.get('nav_date', old_item.get('latest_nav_date', ed)),
+                  })
+          else:
+              for code, info in all_funds.items():
+                  daily_gain = info.get('daily_gain')
+                  fund_name = info.get('fund_name', '')
+                  nav_date = info.get('nav_date', ed)
 
-              if daily_gain is None or daily_gain <= 0:
-                  # 当日无数据或非上涨，从连涨列表中移除
-                  continue
+                  if daily_gain is None or daily_gain <= 0:
+                      # 当日无数据或非上涨，从连涨列表中移除
+                      continue
 
-              old = existing_map.get(code)
-              if old:
-                  # 已在连涨列表：天数+1，涨幅累加
-                  streak_days = old.get('streak_days', 0) + 1
-                  streak_gain = round(old.get('streak_gain', 0) + daily_gain, 4)
-              else:
-                  # 新增：连涨天数=1
-                  streak_days = 1
-                  streak_gain = round(daily_gain, 4)
+                  old = existing_map.get(code)
+                  if old:
+                      # 已在连涨列表：天数+1，涨幅累加
+                      streak_days = old.get('streak_days', 0) + 1
+                      streak_gain = round(old.get('streak_gain', 0) + daily_gain, 4)
+                  else:
+                      # 新增：连涨天数=1
+                      streak_days = 1
+                      streak_gain = round(daily_gain, 4)
 
-              result_funds.append({
-                  'fund_code': code,
-                  'fund_name': fund_name,
-                  'streak_days': streak_days,
-                  'streak_gain': streak_gain,
-                  'latest_daily_gain': round(daily_gain, 4),
-                  'latest_nav_date': nav_date,
-              })
+                  result_funds.append({
+                      'fund_code': code,
+                      'fund_name': fund_name,
+                      'streak_days': streak_days,
+                      'streak_gain': streak_gain,
+                      'latest_daily_gain': round(daily_gain, 4),
+                      'latest_nav_date': nav_date,
+                  })
 
           # 按连涨天数降序，天数相同的按连涨涨幅降序
           result_funds.sort(key=lambda x: (-x['streak_days'], -x['streak_gain']))
@@ -576,3 +618,14 @@ jobs:
         if: steps.fetch-data.outputs.data_updated == 'true'
         id: deployment
         uses: actions/deploy-pages@v4
+
+      # Supabase keep-alive ping（整合到定时任务中，无需单独的 keepalive workflow）
+      # Supabase 免费项目 7 天无活动会暂停，本工作流每天执行 2 次，远小于 7 天阈值
+      # if: always() 确保即使前面步骤失败也会执行 ping
+      - name: Ping Supabase (keep-alive)
+        if: always()
+        run: |
+          echo "Pinging Supabase Edge Function to prevent project pause..."
+          curl -s -o /dev/null -w "Supabase ping: HTTP %{http_code}\n" \
+            "https://cdgfbtemospbwxlyyxib.supabase.co/functions/v1/fund-proxy/health" \
+            || echo "Supabase ping failed (non-fatal)"
