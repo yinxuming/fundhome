@@ -388,14 +388,18 @@ jobs:
           print(f'Updated streak rank: {len(result_funds)} funds, last_trade_date={ed}')
 
           # ========== 估值校准计算 ==========
-          # 调用 FundGuZhi 接口获取估算涨幅(gszzl)和实际涨幅(jzzzl)，
-          # 计算 EMA 校准系数(5日窗口, α=0.33)，保存为 calibration-ratio.json
-          # FundGuZhi 接口同时返回估算和实际涨幅，无需交叉比对 all_funds
+          # 主接口：调用 FundGuZhi 接口获取估算涨幅(gszzl)和实际涨幅(jzzzl)，
+          #         计算 EMA 校准系数(α=0.33)，保存为 calibration-ratio.json
+          #         FundGuZhi 接口同时返回估算和实际涨幅，无需交叉比对 all_funds
+          # 兜底接口（TODO 546）：FundGuZhi 不可用时，使用 FundValuationLast 批量接口
+          #         获取估算涨幅(GSZZL)，配合 fundranking 的实际涨幅(daily_gain)计算校准系数
+          #         新浪接口（sina_ds2/sina_ds3）不支持批量，不适用于服务端校准
           # JSON 最小化：只存 fund_code → ratio 映射
 
-          # 1. 获取所有基金的估算涨幅和实际涨幅（FundGuZhi 接口）
-          # FundGuZhi 返回: gszzl(估算涨幅), jzzzl(实际涨幅), gzrq(估值日期), jjjc(基金简称)
-          # 注意: gzrq 和 gxrq 在 Data 层级，不在单个 item 中
+          # 1. 获取所有基金的估算涨幅和实际涨幅
+          # 主路径：FundGuZhi 返回 gszzl(估算涨幅), jzzzl(实际涨幅), gzrq(估值日期), jjjc(基金简称)
+          #         注意: gzrq 和 gxrq 在 Data 层级，不在单个 item 中
+          # 兜底路径：FundValuationLast 返回 GSZZL(估算涨幅)，实际涨幅从 all_funds.daily_gain 取
           estimate_map = {}  # { fund_code: { 'estimate_growth': float, 'actual_growth': float, 'fund_name': str } }
           est_gzrq = ''  # 估值日期（所有基金共享，在 Data 层级）
           est_page = 1
@@ -457,6 +461,82 @@ jobs:
 
           print(f'FundGuZhi fetched: {len(estimate_map)} funds, gzrq={est_gzrq}')
 
+          # ========== TODO 546: FundGuZhi 不可用时的兜底方案 ==========
+          # 背景：FundGuZhi（东方财富估值榜）接口当前返回"暂无数据"，导致服务端校准无法更新。
+          # 兜底方案：使用 FundValuationLast 批量接口获取估算涨幅(GSZZL)，
+          #          配合 fundranking 已获取的实际涨幅(daily_gain)计算校准系数。
+          #
+          # 为什么不用新浪接口？
+          #   - 新浪估算接口（sina_ds2/sina_ds3）是单基金 JSONP 接口，不支持批量
+          #   - 全市场 23000+ 只基金逐个请求会被限流，且 JSONP 在 Python 中需额外解析
+          #   - FundValuationLast 支持批量（单次50只），适合服务端批量校准
+          #
+          # 前端本地校准（localCalibration.ts）已支持任意数据源（包括新浪），
+          #   因为它从 IDB 缓存读取 est_info.estimate_growth 和 lat_info.growth，
+          #   与数据源无关。服务端兜底仅用于生成 calibration-ratio.json。
+          if len(estimate_map) == 0:
+              print('FundGuZhi returned no data, falling back to FundValuationLast + fundranking...')
+              # FundValuationLast 批量接口：单次最多50只基金
+              # 主域：fundcomapi.tiantianfunds.com，备用域：fundcomapi.eastmoney.com
+              fund_codes_list = [fc for fc in all_funds.keys() if all_funds[fc].get('daily_gain') is not None]
+              print(f'Funds to calibrate (with daily_gain): {len(fund_codes_list)}')
+              batch_size = 50
+              fallback_matched = 0
+              for i in range(0, len(fund_codes_list), batch_size):
+                  batch = fund_codes_list[i:i + batch_size]
+                  fcodes = ','.join(batch)
+                  # 尝试主域和备用域
+                  for base_url in [
+                      'https://fundcomapi.tiantianfunds.com/mm/newCore/FundValuationLast',
+                      'https://fundcomapi.eastmoney.com/mm/newCore/FundValuationLast',
+                  ]:
+                      fvl_url = f'{base_url}?FCODES={fcodes}&FIELDS=FCODE,SHORTNAME,GSZZL,GZTIME,GSZ,NAV,PDATE'
+                      fvl_req = urllib.request.Request(fvl_url, headers={
+                          'Referer': 'https://fund.eastmoney.com/',
+                          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                      })
+                      try:
+                          with urllib.request.urlopen(fvl_req, timeout=30) as resp:
+                              fvl_text = resp.read().decode('utf-8')
+                          fvl_data = json.loads(fvl_text)
+                          # 兼容 camelCase（实测）和 PascalCase 两种格式
+                          err_code = fvl_data.get('errorCode', fvl_data.get('ErrCode'))
+                          data_arr = fvl_data.get('data', fvl_data.get('Datas'))
+                          if err_code != 0 or not isinstance(data_arr, list):
+                              print(f'FundValuationLast batch {i//batch_size + 1} error on {base_url}: errCode={err_code}', file=sys.stderr)
+                              continue
+                          for item in data_arr:
+                              fc = str(item.get('FCODE', item.get('fundcode', ''))).strip()
+                              if not fc:
+                                  continue
+                              gszzl = item.get('GSZZL', item.get('gszzl'))
+                              jjjc = str(item.get('SHORTNAME', item.get('name', ''))).strip()
+                              pdate = str(item.get('PDATE', item.get('jzrq', ''))).strip()[:10]
+                              try:
+                                  est_growth = float(gszzl) if gszzl is not None else None
+                              except (ValueError, TypeError):
+                                  est_growth = None
+                              # 实际涨幅来自 fundranking 的 daily_gain
+                              actual_growth = all_funds.get(fc, {}).get('daily_gain')
+                              if est_growth is not None and actual_growth is not None:
+                                  estimate_map[fc] = {
+                                      'estimate_growth': est_growth,
+                                      'actual_growth': actual_growth,
+                                      'fund_name': jjjc,
+                                  }
+                                  fallback_matched += 1
+                              # 记录 PDATE 作为估值日期（取第一个有效的）
+                              if not est_gzrq and pdate:
+                                  est_gzrq = pdate
+                          break  # 成功，跳出备用域尝试
+                      except Exception as e:
+                          print(f'FundValuationLast batch {i//batch_size + 1} failed on {base_url}: {e}', file=sys.stderr)
+                          continue
+              # 兜底时若 PDATE 缺失，使用 ed 作为估值日期（fundranking 的 daily_gain 对应 ed）
+              if not est_gzrq:
+                  est_gzrq = ed
+              print(f'FundValuationLast fallback matched: {fallback_matched} funds, est_gzrq={est_gzrq}')
+
           # 2. 读取现有 calibration-ratio.json 获取 prev_ema 和上次校准日期
           prev_calibrations = {}
           prev_last_trade_date = ''
@@ -471,8 +551,9 @@ jobs:
               print(f'Read existing calibration failed: {e}', file=sys.stderr)
 
           # 3. 计算 EMA 校准系数
-          # 校准基于 FundGuZhi 返回的 gszzl(估算涨幅) 和 jzzzl(实际涨幅)，
-          # 两者对应同一天(gzrq)，无需与 ed(最新交易日) 匹配。
+          # 校准基于估算涨幅(estimate_growth) 和实际涨幅(actual_growth)，
+          # 主路径：FundGuZhi 的 gszzl/jzzzl，两者对应同一天(gzrq)
+          # 兜底路径：FundValuationLast 的 GSZZL + fundranking 的 daily_gain，两者对应同一天(ed/PDATE)
           # 防重复保护：如果 est_gzrq == prev_last_trade_date，说明今天已校准过，保留旧值。
           ALPHA = 0.33
           new_calibrations = {}
@@ -561,10 +642,9 @@ jobs:
 
           print(f'Updated calibration-ratio.json: {len(final_calibrations)} funds, last_trade_date={est_gzrq}')
 
-          # 检查 FundGuZhi 是否返回了有效估值数据
+          # 检查估值数据是否完全不可用（FundGuZhi 和 FundValuationLast 兜底都失败）
           if len(estimate_map) == 0:
-              print('WARNING: FundGuZhi returned no estimate data at this time. calibration-ratio.json not updated with new data.', file=sys.stderr)
-
+              print('WARNING: Both FundGuZhi and FundValuationLast fallback returned no estimate data. calibration-ratio.json not updated with new data.', file=sys.stderr)
           # 标记数据已更新，触发 commit 和 deploy 步骤
           with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
               f.write('data_updated=true\n')
