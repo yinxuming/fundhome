@@ -118,7 +118,7 @@
         };
       }
     </script>
-    <script type="module" crossorigin src="https://cdn.jsdelivr.net/gh/yinxuming/fundhome@main/assets/index-Bdfpw5IE.js"></script>
+    <script type="module" crossorigin src="https://cdn.jsdelivr.net/gh/yinxuming/fundhome@main/assets/index-BrqeUoHT.js"></script>
     <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/gh/yinxuming/fundhome@main/assets/vendor-react-D7IRvkfd.js">
     <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/gh/yinxuming/fundhome@main/assets/vendor-query-BQR7dux3.js">
     <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/gh/yinxuming/fundhome@main/assets/vendor-antd-CKpUD8MA.js">
@@ -149,6 +149,14 @@
     </script>
     <script>
       window.onerror = function(msg, url, line, col, error) {
+        // TODO 551: 忽略跨域脚本错误（如新浪 JSONP 接口 FdFundService.getEstimateNetworthPic）
+        // 跨域脚本错误特征：msg="Script error."，url="" 或跨域，line=0
+        // 这些错误由第三方 JSONP 加载失败/被中断触发，sina.ts 的 script.onerror 已处理，
+        // 不应阻塞应用，仅在控制台记录便于排查
+        if (msg === 'Script error.' && (!url || url.indexOf(location.origin) !== 0)) {
+          console.warn('[window.onerror] 跨域脚本错误已忽略（第三方 JSONP 加载失败）:', msg, url, line);
+          return true;
+        }
         document.getElementById('loading').style.display = 'none';
         document.getElementById('error-msg').style.display = 'block';
         document.getElementById('error-detail').textContent =
@@ -208,6 +216,6 @@
     </script>
     <script nomodule>!function(){var e=document,t=e.createElement("script");if(!("noModule"in t)&&"onbeforeload"in t){var n=!1;e.addEventListener("beforeload",(function(e){if(e.target===t)n=!0;else if(!e.target.hasAttribute("nomodule")||!n)return;e.preventDefault()}),!0),t.type="module",t.src=".",e.head.appendChild(t),t.remove()}}();</script>
     <script nomodule crossorigin id="vite-legacy-polyfill" src="https://cdn.jsdelivr.net/gh/yinxuming/fundhome@main/assets/polyfills-legacy-4iMlGuCM.js"></script>
-    <script nomodule crossorigin id="vite-legacy-entry" data-src="https://cdn.jsdelivr.net/gh/yinxuming/fundhome@main/assets/index-legacy-1GOpbZ2p.js">System.import(document.getElementById('vite-legacy-entry').getAttribute('data-src'))</script>
+    <script nomodule crossorigin id="vite-legacy-entry" data-src="https://cdn.jsdelivr.net/gh/yinxuming/fundhome@main/assets/index-legacy-AvKtgqnD.js">System.import(document.getElementById('vite-legacy-entry').getAttribute('data-src'))</script>
   </body>
 </html>
