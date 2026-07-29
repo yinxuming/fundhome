@@ -118,7 +118,7 @@
         };
       }
     </script>
-    <script type="module" crossorigin src="https://cdn.jsdelivr.net/gh/yinxuming/fundhome@main/assets/index-BrqeUoHT.js"></script>
+    <script type="module" crossorigin src="https://cdn.jsdelivr.net/gh/yinxuming/fundhome@main/assets/index-Dv8lAan1.js"></script>
     <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/gh/yinxuming/fundhome@main/assets/vendor-react-D7IRvkfd.js">
     <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/gh/yinxuming/fundhome@main/assets/vendor-query-BQR7dux3.js">
     <link rel="modulepreload" crossorigin href="https://cdn.jsdelivr.net/gh/yinxuming/fundhome@main/assets/vendor-antd-CKpUD8MA.js">
@@ -149,12 +149,23 @@
     </script>
     <script>
       window.onerror = function(msg, url, line, col, error) {
-        // TODO 551: 忽略跨域脚本错误（如新浪 JSONP 接口 FdFundService.getEstimateNetworthPic）
+        // TODO 549/552: 忽略跨域脚本错误（如新浪 JSONP 接口 FdFundService.getEstimateNetworthPic）
         // 跨域脚本错误特征：msg="Script error."，url="" 或跨域，line=0
         // 这些错误由第三方 JSONP 加载失败/被中断触发，sina.ts 的 script.onerror 已处理，
         // 不应阻塞应用，仅在控制台记录便于排查
-        if (msg === 'Script error.' && (!url || url.indexOf(location.origin) !== 0)) {
+        // TODO 552: 增强 matching，部分浏览器 msg 可能包含额外信息（如 "Script error. (...)"）
+        var msgStr = String(msg || '');
+        var isCrossOriginScriptError =
+          msgStr.indexOf('Script error') === 0 &&
+          (!url || url.indexOf(location.origin) !== 0);
+        if (isCrossOriginScriptError) {
           console.warn('[window.onerror] 跨域脚本错误已忽略（第三方 JSONP 加载失败）:', msg, url, line);
+          return true;
+        }
+        // TODO 552: 忽略网络资源加载失败（如 supabase.co 超时、positions 404 等）
+        // 这些错误由资源加载失败触发，不影响应用核心功能，已由各模块的 catch 块处理
+        if (typeof msgStr === 'string' && (msgStr.indexOf('Error loading script') === 0 || msgStr.indexOf('NetworkError') === 0)) {
+          console.warn('[window.onerror] 网络资源加载错误已忽略:', msg, url, line);
           return true;
         }
         document.getElementById('loading').style.display = 'none';
@@ -167,10 +178,20 @@
         return true;
       };
       window.onunhandledrejection = function(event) {
+        // TODO 552: 忽略网络相关的 Promise 拒绝（如 supabase.co 连接超时）
+        var reason = event.reason;
+        var reasonMsg = reason ? (reason.message || String(reason)) : '';
+        if (reasonMsg.indexOf('Failed to fetch') !== -1 ||
+            reasonMsg.indexOf('aborted') !== -1 ||
+            reasonMsg.indexOf('NetworkError') !== -1 ||
+            reasonMsg.indexOf('ERR_CONNECTION') !== -1) {
+          console.warn('[onunhandledrejection] 网络相关 Promise 拒绝已忽略:', reasonMsg);
+          return;
+        }
         document.getElementById('loading').style.display = 'none';
         document.getElementById('error-msg').style.display = 'block';
         document.getElementById('error-detail').textContent =
-          'Promise错误: ' + (event.reason ? event.reason.message || event.reason : '未知错误') + '\n' +
+          'Promise错误: ' + (reason ? reason.message || reason : '未知错误') + '\n' +
           '浏览器: ' + navigator.userAgent;
       };
     </script>
@@ -216,6 +237,6 @@
     </script>
     <script nomodule>!function(){var e=document,t=e.createElement("script");if(!("noModule"in t)&&"onbeforeload"in t){var n=!1;e.addEventListener("beforeload",(function(e){if(e.target===t)n=!0;else if(!e.target.hasAttribute("nomodule")||!n)return;e.preventDefault()}),!0),t.type="module",t.src=".",e.head.appendChild(t),t.remove()}}();</script>
     <script nomodule crossorigin id="vite-legacy-polyfill" src="https://cdn.jsdelivr.net/gh/yinxuming/fundhome@main/assets/polyfills-legacy-4iMlGuCM.js"></script>
-    <script nomodule crossorigin id="vite-legacy-entry" data-src="https://cdn.jsdelivr.net/gh/yinxuming/fundhome@main/assets/index-legacy-AvKtgqnD.js">System.import(document.getElementById('vite-legacy-entry').getAttribute('data-src'))</script>
+    <script nomodule crossorigin id="vite-legacy-entry" data-src="https://cdn.jsdelivr.net/gh/yinxuming/fundhome@main/assets/index-legacy-C4UCfqQo.js">System.import(document.getElementById('vite-legacy-entry').getAttribute('data-src'))</script>
   </body>
 </html>
