@@ -1,1 +1,706 @@
-{"last_update":"","last_trade_date":"","funds":[]}
+{
+  "last_update": "2026-07-31 03:32:04",
+  "last_trade_date": "2026-07-30",
+  "funds": [
+    {
+      "fund_code": "017811",
+      "fund_name": "东方人工智能主题混合C",
+      "hold_counts": {
+        "2026-07-30": 1439599
+      }
+    },
+    {
+      "fund_code": "025209",
+      "fund_name": "永赢先锋半导体智选混合C",
+      "hold_counts": {
+        "2026-07-30": 1225031
+      }
+    },
+    {
+      "fund_code": "161226",
+      "fund_name": "国投瑞银白银期货(LOF)A",
+      "hold_counts": {
+        "2026-07-30": 1135805
+      }
+    },
+    {
+      "fund_code": "012922",
+      "fund_name": "易方达全球成长精选混合(QDII)C",
+      "hold_counts": {
+        "2026-07-30": 1087899
+      }
+    },
+    {
+      "fund_code": "021528",
+      "fund_name": "财通成长优选混合C",
+      "hold_counts": {
+        "2026-07-30": 1077717
+      }
+    },
+    {
+      "fund_code": "016874",
+      "fund_name": "广发远见智选混合C",
+      "hold_counts": {
+        "2026-07-30": 950161
+      }
+    },
+    {
+      "fund_code": "017470",
+      "fund_name": "嘉实上证科创板芯片ETF联接C",
+      "hold_counts": {
+        "2026-07-30": 905368
+      }
+    },
+    {
+      "fund_code": "025500",
+      "fund_name": "东方阿尔法科技智选混合C",
+      "hold_counts": {
+        "2026-07-30": 847407
+      }
+    },
+    {
+      "fund_code": "011452",
+      "fund_name": "华泰柏瑞质量成长混合C",
+      "hold_counts": {
+        "2026-07-30": 833393
+      }
+    },
+    {
+      "fund_code": "016708",
+      "fund_name": "华夏有色金属ETF联接C",
+      "hold_counts": {
+        "2026-07-30": 767766
+      }
+    },
+    {
+      "fund_code": "025857",
+      "fund_name": "华夏中证电网设备主题ETF联接C",
+      "hold_counts": {
+        "2026-07-30": 720124
+      }
+    },
+    {
+      "fund_code": "015790",
+      "fund_name": "永赢高端装备智选混合C",
+      "hold_counts": {
+        "2026-07-30": 686553
+      }
+    },
+    {
+      "fund_code": "018957",
+      "fund_name": "中航机遇领航混合C",
+      "hold_counts": {
+        "2026-07-30": 683517
+      }
+    },
+    {
+      "fund_code": "018147",
+      "fund_name": "建信新兴市场优选混合(QDII)C",
+      "hold_counts": {
+        "2026-07-30": 615748
+      }
+    },
+    {
+      "fund_code": "006479",
+      "fund_name": "广发纳斯达克100ETF联接(QDII)C",
+      "hold_counts": {
+        "2026-07-30": 614636
+      }
+    },
+    {
+      "fund_code": "020274",
+      "fund_name": "富国中证细分化工产业主题ETF联接C",
+      "hold_counts": {
+        "2026-07-30": 586102
+      }
+    },
+    {
+      "fund_code": "012920",
+      "fund_name": "易方达全球成长精选混合(QDII)A",
+      "hold_counts": {
+        "2026-07-30": 582776
+      }
+    },
+    {
+      "fund_code": "022365",
+      "fund_name": "永赢科技智选混合C",
+      "hold_counts": {
+        "2026-07-30": 566458
+      }
+    },
+    {
+      "fund_code": "018125",
+      "fund_name": "永赢先进制造智选混合C",
+      "hold_counts": {
+        "2026-07-30": 561862
+      }
+    },
+    {
+      "fund_code": "024239",
+      "fund_name": "华夏全球科技先锋混合(QDII)C",
+      "hold_counts": {
+        "2026-07-30": 536997
+      }
+    },
+    {
+      "fund_code": "017193",
+      "fund_name": "天弘中证工业有色金属主题ETF联接C",
+      "hold_counts": {
+        "2026-07-30": 532441
+      }
+    },
+    {
+      "fund_code": "018463",
+      "fund_name": "德邦稳盈增长灵活配置混合C",
+      "hold_counts": {
+        "2026-07-30": 424939
+      }
+    },
+    {
+      "fund_code": "013841",
+      "fund_name": "银华集成电路混合C",
+      "hold_counts": {
+        "2026-07-30": 515162
+      }
+    },
+    {
+      "fund_code": "270042",
+      "fund_name": "广发纳斯达克100ETF联接(QDII)A",
+      "hold_counts": {
+        "2026-07-30": 501552
+      }
+    },
+    {
+      "fund_code": "020640",
+      "fund_name": "广发半导体材料设备主题ETF联接C",
+      "hold_counts": {
+        "2026-07-30": 471803
+      }
+    },
+    {
+      "fund_code": "002207",
+      "fund_name": "前海开源金银珠宝混合C",
+      "hold_counts": {
+        "2026-07-30": 461902
+      }
+    },
+    {
+      "fund_code": "006503",
+      "fund_name": "财通集成电路产业股票C",
+      "hold_counts": {
+        "2026-07-30": 457940
+      }
+    },
+    {
+      "fund_code": "008888",
+      "fund_name": "华夏国证半导体芯片ETF联接C",
+      "hold_counts": {
+        "2026-07-30": 456755
+      }
+    },
+    {
+      "fund_code": "024418",
+      "fund_name": "华夏上证科创板半导体材料设备主题ETF联接C",
+      "hold_counts": {
+        "2026-07-30": 451580
+      }
+    },
+    {
+      "fund_code": "018816",
+      "fund_name": "方正富邦核心优势混合C",
+      "hold_counts": {
+        "2026-07-30": 447091
+      }
+    },
+    {
+      "fund_code": "019875",
+      "fund_name": "广发稀有金属主题ETF联接C",
+      "hold_counts": {
+        "2026-07-30": 442588
+      }
+    },
+    {
+      "fund_code": "016665",
+      "fund_name": "天弘全球高端制造混合(QDII)C",
+      "hold_counts": {
+        "2026-07-30": 427072
+      }
+    },
+    {
+      "fund_code": "026211",
+      "fund_name": "平安科技精选混合C",
+      "hold_counts": {
+        "2026-07-30": 420749
+      }
+    },
+    {
+      "fund_code": "004253",
+      "fund_name": "国泰黄金ETF联接C",
+      "hold_counts": {
+        "2026-07-30": 417784
+      }
+    },
+    {
+      "fund_code": "017641",
+      "fund_name": "摩根标普500指数(QDII)A",
+      "hold_counts": {
+        "2026-07-30": 416707
+      }
+    },
+    {
+      "fund_code": "290008",
+      "fund_name": "泰信发展主题混合",
+      "hold_counts": {
+        "2026-07-30": 415470
+      }
+    },
+    {
+      "fund_code": "025491",
+      "fund_name": "平安中证卫星产业指数C",
+      "hold_counts": {
+        "2026-07-30": 394906
+      }
+    },
+    {
+      "fund_code": "002112",
+      "fund_name": "德邦鑫星价值灵活配置混合C",
+      "hold_counts": {
+        "2026-07-30": 391473
+      }
+    },
+    {
+      "fund_code": "019005",
+      "fund_name": "国投瑞银白银期货(LOF)C",
+      "hold_counts": {
+        "2026-07-30": 390792
+      }
+    },
+    {
+      "fund_code": "025833",
+      "fund_name": "天弘中证电网设备主题指数C",
+      "hold_counts": {
+        "2026-07-30": 388822
+      }
+    },
+    {
+      "fund_code": "022184",
+      "fund_name": "富国全球科技互联网股票(QDII)C",
+      "hold_counts": {
+        "2026-07-30": 380781
+      }
+    },
+    {
+      "fund_code": "024481",
+      "fund_name": "财通品质甄选混合C",
+      "hold_counts": {
+        "2026-07-30": 352825
+      }
+    },
+    {
+      "fund_code": "000218",
+      "fund_name": "国泰黄金ETF联接A",
+      "hold_counts": {
+        "2026-07-30": 351776
+      }
+    },
+    {
+      "fund_code": "016452",
+      "fund_name": "南方纳斯达克100指数(QDII)A",
+      "hold_counts": {
+        "2026-07-30": 339614
+      }
+    },
+    {
+      "fund_code": "016371",
+      "fund_name": "信澳业绩驱动混合C",
+      "hold_counts": {
+        "2026-07-30": 336476
+      }
+    },
+    {
+      "fund_code": "021075",
+      "fund_name": "华夏中证沪深港黄金产业股票ETF联接C",
+      "hold_counts": {
+        "2026-07-30": 334361
+      }
+    },
+    {
+      "fund_code": "011036",
+      "fund_name": "嘉实中证稀土产业ETF联接C",
+      "hold_counts": {
+        "2026-07-30": 333132
+      }
+    },
+    {
+      "fund_code": "017731",
+      "fund_name": "嘉实全球产业升级股票(QDII)C",
+      "hold_counts": {
+        "2026-07-30": 332992
+      }
+    },
+    {
+      "fund_code": "012895",
+      "fund_name": "天弘中证科创创业50ETF联接C",
+      "hold_counts": {
+        "2026-07-30": 332082
+      }
+    },
+    {
+      "fund_code": "024663",
+      "fund_name": "富国创业板人工智能ETF联接C",
+      "hold_counts": {
+        "2026-07-30": 327807
+      }
+    },
+    {
+      "fund_code": "002611",
+      "fund_name": "博时黄金ETF联接C",
+      "hold_counts": {
+        "2026-07-30": 320537
+      }
+    },
+    {
+      "fund_code": "016453",
+      "fund_name": "南方纳斯达克100指数(QDII)C",
+      "hold_counts": {
+        "2026-07-30": 316235
+      }
+    },
+    {
+      "fund_code": "015968",
+      "fund_name": "永赢半导体产业智选混合C",
+      "hold_counts": {
+        "2026-07-30": 302216
+      }
+    },
+    {
+      "fund_code": "021190",
+      "fund_name": "南方亚太精选ETF联接(QDII)C",
+      "hold_counts": {
+        "2026-07-30": 299644
+      }
+    },
+    {
+      "fund_code": "004433",
+      "fund_name": "南方有色金属ETF联接C",
+      "hold_counts": {
+        "2026-07-30": 296518
+      }
+    },
+    {
+      "fund_code": "018123",
+      "fund_name": "永赢数字经济智选混合C",
+      "hold_counts": {
+        "2026-07-30": 296188
+      }
+    },
+    {
+      "fund_code": "011370",
+      "fund_name": "华商均衡成长混合C",
+      "hold_counts": {
+        "2026-07-30": 289653
+      }
+    },
+    {
+      "fund_code": "025687",
+      "fund_name": "国泰半导体制造精选混合C",
+      "hold_counts": {
+        "2026-07-30": 281555
+      }
+    },
+    {
+      "fund_code": "016186",
+      "fund_name": "广发电力公用事业ETF联接C",
+      "hold_counts": {
+        "2026-07-30": 280705
+      }
+    },
+    {
+      "fund_code": "017992",
+      "fund_name": "华泰柏瑞致远混合C",
+      "hold_counts": {
+        "2026-07-30": 278422
+      }
+    },
+    {
+      "fund_code": "012414",
+      "fund_name": "招商中证白酒指数C",
+      "hold_counts": {
+        "2026-07-30": 278418
+      }
+    },
+    {
+      "fund_code": "012349",
+      "fund_name": "天弘恒生科技ETF联接(QDII)C",
+      "hold_counts": {
+        "2026-07-30": 275671
+      }
+    },
+    {
+      "fund_code": "015795",
+      "fund_name": "天弘创业板指数增强C",
+      "hold_counts": {
+        "2026-07-30": 264442
+      }
+    },
+    {
+      "fund_code": "000217",
+      "fund_name": "华安黄金ETF联接C",
+      "hold_counts": {
+        "2026-07-30": 263406
+      }
+    },
+    {
+      "fund_code": "017437",
+      "fund_name": "华宝纳斯达克精选股票(QDII)C",
+      "hold_counts": {
+        "2026-07-30": 254202
+      }
+    },
+    {
+      "fund_code": "501205",
+      "fund_name": "鹏华创新未来混合(LOF)C",
+      "hold_counts": {
+        "2026-07-30": 250573
+      }
+    },
+    {
+      "fund_code": "016531",
+      "fund_name": "鹏华碳中和主题混合C",
+      "hold_counts": {
+        "2026-07-30": 249891
+      }
+    },
+    {
+      "fund_code": "021277",
+      "fund_name": "广发全球精选股票(QDII)C",
+      "hold_counts": {
+        "2026-07-30": 249007
+      }
+    },
+    {
+      "fund_code": "008989",
+      "fund_name": "大成科技创新混合C",
+      "hold_counts": {
+        "2026-07-30": 248467
+      }
+    },
+    {
+      "fund_code": "002963",
+      "fund_name": "易方达黄金ETF联接C",
+      "hold_counts": {
+        "2026-07-30": 245994
+      }
+    },
+    {
+      "fund_code": "011609",
+      "fund_name": "易方达科创50联接C",
+      "hold_counts": {
+        "2026-07-30": 245563
+      }
+    },
+    {
+      "fund_code": "539002",
+      "fund_name": "建信新兴市场优选混合(QDII)A",
+      "hold_counts": {
+        "2026-07-30": 244827
+      }
+    },
+    {
+      "fund_code": "002891",
+      "fund_name": "华夏移动互联灵活配置混合(QDII)",
+      "hold_counts": {
+        "2026-07-30": 243424
+      }
+    },
+    {
+      "fund_code": "007491",
+      "fund_name": "南方信息创新混合C",
+      "hold_counts": {
+        "2026-07-30": 239153
+      }
+    },
+    {
+      "fund_code": "020357",
+      "fund_name": "华夏半导体材料设备ETF联接C",
+      "hold_counts": {
+        "2026-07-30": 235144
+      }
+    },
+    {
+      "fund_code": "006373",
+      "fund_name": "国富全球科技互联混合（QDII）人民币A",
+      "hold_counts": {
+        "2026-07-30": 220444
+      }
+    },
+    {
+      "fund_code": "024195",
+      "fund_name": "永赢国证商用卫星通信产业ETF联接C",
+      "hold_counts": {
+        "2026-07-30": 218165
+      }
+    },
+    {
+      "fund_code": "016702",
+      "fund_name": "银华海外数字经济量化选股混合(QDII)C",
+      "hold_counts": {
+        "2026-07-30": 215284
+      }
+    },
+    {
+      "fund_code": "012734",
+      "fund_name": "易方达人工智能ETF联接C",
+      "hold_counts": {
+        "2026-07-30": 206441
+      }
+    },
+    {
+      "fund_code": "040046",
+      "fund_name": "华安纳斯达克100ETF联接(QDII)A",
+      "hold_counts": {
+        "2026-07-30": 204087
+      }
+    },
+    {
+      "fund_code": "019172",
+      "fund_name": "摩根纳斯达克100指数(QDII)A",
+      "hold_counts": {
+        "2026-07-30": 203219
+      }
+    },
+    {
+      "fund_code": "014855",
+      "fund_name": "嘉实中证半导体产业指数增强C",
+      "hold_counts": {
+        "2026-07-30": 202571
+      }
+    },
+    {
+      "fund_code": "024203",
+      "fund_name": "永赢制造升级智选混合C",
+      "hold_counts": {
+        "2026-07-30": 201683
+      }
+    },
+    {
+      "fund_code": "011103",
+      "fund_name": "天弘中证光伏产业指数C",
+      "hold_counts": {
+        "2026-07-30": 200833
+      }
+    },
+    {
+      "fund_code": "008254",
+      "fund_name": "华宝致远混合(QDII)C",
+      "hold_counts": {
+        "2026-07-30": 198881
+      }
+    },
+    {
+      "fund_code": "015916",
+      "fund_name": "永赢医药创新智选混合C",
+      "hold_counts": {
+        "2026-07-30": 195888
+      }
+    },
+    {
+      "fund_code": "008087",
+      "fund_name": "华夏中证5G通信主题ETF联接C",
+      "hold_counts": {
+        "2026-07-30": 195149
+      }
+    },
+    {
+      "fund_code": "015060",
+      "fund_name": "华夏节能环保股票C",
+      "hold_counts": {
+        "2026-07-30": 191469
+      }
+    },
+    {
+      "fund_code": "021842",
+      "fund_name": "国富全球科技互联混合（QDII）人民币C",
+      "hold_counts": {
+        "2026-07-30": 191375
+      }
+    },
+    {
+      "fund_code": "019018",
+      "fund_name": "易方达信息产业混合C",
+      "hold_counts": {
+        "2026-07-30": 185695
+      }
+    },
+    {
+      "fund_code": "014143",
+      "fund_name": "银河创新成长混合C",
+      "hold_counts": {
+        "2026-07-30": 185161
+      }
+    },
+    {
+      "fund_code": "021523",
+      "fund_name": "财通价值动量混合C",
+      "hold_counts": {
+        "2026-07-30": 183210
+      }
+    },
+    {
+      "fund_code": "023639",
+      "fund_name": "国泰A股电网设备ETF联接C",
+      "hold_counts": {
+        "2026-07-30": 182700
+      }
+    },
+    {
+      "fund_code": "017223",
+      "fund_name": "富国中证电池主题ETF联接C",
+      "hold_counts": {
+        "2026-07-30": 181004
+      }
+    },
+    {
+      "fund_code": "011120",
+      "fund_name": "富国创新科技混合C",
+      "hold_counts": {
+        "2026-07-30": 176705
+      }
+    },
+    {
+      "fund_code": "018291",
+      "fund_name": "广发新兴成长灵活配置混合C",
+      "hold_counts": {
+        "2026-07-30": 173477
+      }
+    },
+    {
+      "fund_code": "020465",
+      "fund_name": "招商中证半导体产业ETF联接C",
+      "hold_counts": {
+        "2026-07-30": 172423
+      }
+    },
+    {
+      "fund_code": "019305",
+      "fund_name": "摩根标普500指数(QDII)C",
+      "hold_counts": {
+        "2026-07-30": 169274
+      }
+    },
+    {
+      "fund_code": "257070",
+      "fund_name": "国联安优选行业混合",
+      "hold_counts": {
+        "2026-07-30": 167200
+      }
+    },
+    {
+      "fund_code": "010524",
+      "fund_name": "银华中证5G通信主题ETF联接C",
+      "hold_counts": {
+        "2026-07-30": 166893
+      }
+    }
+  ]
+}
