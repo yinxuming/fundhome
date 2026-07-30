@@ -581,12 +581,188 @@ jobs:
               f.write('data_updated=true\n')
           EOF
 
+      # TODO 578: 拉取养基宝基金持有榜数据（含历史趋势）
+      # 需要在仓库 Settings → Secrets → Actions 中配置 YJB_WX_WXUK 和 YJB_WX_COOKIE
+      # 每日追加当日持有人数到 data/hold-count-ranking.json，基金数超过1000时移除末尾基金
+      - name: Fetch hold count ranking
+        if: steps.check.outputs.already_done != 'true'
+        id: fetch-hold-count
+        env:
+          ED: ${{ steps.check.outputs.ed }}
+          YJB_WX_WXUK: ${{ secrets.YJB_WX_WXUK }}
+          YJB_WX_COOKIE: ${{ secrets.YJB_WX_COOKIE }}
+        run: |
+          mkdir -p data
+          python3 << 'EOF'
+          import json, urllib.request, urllib.parse, sys, datetime, zoneinfo, os, re, hashlib
+
+          tz_bj = zoneinfo.ZoneInfo('Asia/Shanghai')
+          now_bj = datetime.datetime.now(tz_bj)
+
+          ed = os.environ.get('ED', '')
+          wxuk = os.environ.get('YJB_WX_WXUK', '')
+          cookie = os.environ.get('YJB_WX_COOKIE', '')
+
+          # 凭证未配置时跳过（不影响 streak-rank 主流程）
+          if not wxuk or not cookie:
+              print('YJB_WX_WXUK or YJB_WX_COOKIE not set, skip hold count ranking fetch')
+              with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+                  f.write('hold_count_updated=false\n')
+              sys.exit(0)
+
+          # 从 cookie 中提取 XSRF-TOKEN（URL 解码 %3D → =）
+          xsrf_match = re.search(r'XSRF-TOKEN=([^;]+)', cookie)
+          if not xsrf_match:
+              print('XSRF-TOKEN not found in cookie, skip', file=sys.stderr)
+              with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+                  f.write('hold_count_updated=false\n')
+              sys.exit(0)
+          try:
+              xsrf_token = urllib.parse.unquote(xsrf_match.group(1))
+          except Exception:
+              xsrf_token = xsrf_match.group(1)
+
+          # 计算养基宝微信网页版签名
+          # 算法：SHA256(baseURL + urlPath + token + secret + timestamp)
+          YJB_WX_BASE = 'https://wx.yangjibao.com/wxapi'
+          YJB_WX_SECRET = 'FI1IUyhfbwOXiAkv1ZUR5WwmlIEsztLn'
+          url_path = '/fund_hold_ranking'
+          timestamp = int(now_bj.timestamp())
+          sign_str = YJB_WX_BASE + url_path + wxuk + YJB_WX_SECRET + str(timestamp)
+          request_sign = hashlib.sha256(sign_str.encode('utf-8')).hexdigest()
+
+          # 请求持有榜（page=1, per_page=100，接口最大限制100）
+          params = urllib.parse.urlencode({'page': 1, 'per_page': 100})
+          url = f'{YJB_WX_BASE}{url_path}?{params}'
+          headers = {
+              'Host': 'wx.yangjibao.com',
+              'Cookie': cookie,
+              'authorization': wxuk,
+              'x-xsrf-token': xsrf_token,
+              'request-time': str(timestamp),
+              'request-sign': request_sign,
+              'accept': 'application/json, text/plain, */*',
+              'content-type': 'application/json',
+              'version': 'yjb_wxfwh-2.0.3',
+              # User-Agent 必须包含 MicroMessenger，否则返回 401
+              'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36 NetType/WIFI MicroMessenger/7.0.20.1781(0x6700143B) WindowsWechat(0x63090a13)',
+              'sec-fetch-site': 'same-origin',
+              'sec-fetch-mode': 'cors',
+              'sec-fetch-dest': 'empty',
+              'referer': 'https://wx.yangjibao.com/app/ranking/hold-count',
+              'accept-language': 'zh-CN,zh;q=0.9',
+          }
+          req = urllib.request.Request(url, headers=headers)
+          try:
+              with urllib.request.urlopen(req, timeout=30) as resp:
+                  raw = resp.read().decode('utf-8')
+              result = json.loads(raw)
+          except Exception as e:
+              print(f'Fetch hold count ranking failed: {e}', file=sys.stderr)
+              with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+                  f.write('hold_count_updated=false\n')
+              sys.exit(0)
+
+          if result.get('code') != 200 or not result.get('data'):
+              print(f'Hold count ranking API error: code={result.get("code")}, message={result.get("message")}', file=sys.stderr)
+              with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+                  f.write('hold_count_updated=false\n')
+              sys.exit(0)
+
+          data = result['data']
+          hold_list = data.get('list', [])
+          api_time = data.get('time', '')
+          print(f'Fetched {len(hold_list)} funds from hold count ranking, api_time={api_time}')
+
+          if not hold_list:
+              print('Hold count ranking list empty, skip update', file=sys.stderr)
+              with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+                  f.write('hold_count_updated=false\n')
+              sys.exit(0)
+
+          # 读取现有 hold-count-ranking.json
+          existing = {'last_update': '', 'last_trade_date': '', 'funds': []}
+          try:
+              with open('data/hold-count-ranking.json', encoding='utf-8') as f:
+                  existing = json.load(f)
+          except FileNotFoundError:
+              pass
+          except Exception as e:
+              print(f'Read existing hold-count-ranking.json failed: {e}', file=sys.stderr)
+
+          # 防重复：如果 last_trade_date == ed 且 funds 非空，跳过当日追加
+          if existing.get('last_trade_date') == ed and len(existing.get('funds', [])) > 0:
+              print(f'Hold count ranking already updated for ed={ed}, skip')
+              with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+                  f.write('hold_count_updated=false\n')
+              sys.exit(0)
+
+          # 构建当日 fund_code → { count, name } 映射
+          today_map = {}
+          for item in hold_list:
+              code = item.get('code', '').strip()
+              if not code:
+                  continue
+              today_map[code] = {
+                  'count': item.get('near_1m_hold_count_num', 0),
+                  'name': item.get('name', ''),
+              }
+
+          # 合并历史数据
+          # existing.funds 结构：[{ fund_code, fund_name, hold_counts: { "2026-07-28": 12345, ... } }]
+          existing_map = {f['fund_code']: f for f in existing.get('funds', [])}
+
+          # 本次榜单中的基金（按当前排名顺序保留）
+          result_funds = []
+          for item in hold_list:
+              code = item.get('code', '').strip()
+              if not code:
+                  continue
+              name = item.get('name', '')
+              count = item.get('near_1m_hold_count_num', 0)
+
+              old = existing_map.get(code, {})
+              old_counts = old.get('hold_counts', {})
+
+              # 追加当日人数（仅当该日期不存在时才追加，避免重复）
+              if ed not in old_counts:
+                  new_counts = {**old_counts, ed: count}
+              else:
+                  new_counts = old_counts
+
+              result_funds.append({
+                  'fund_code': code,
+                  'fund_name': name,
+                  'hold_counts': new_counts,
+              })
+
+          # 限制基金数 ≤ 1000（按当前排名截断，末尾基金及历史一并移除）
+          MAX_FUNDS = 1000
+          if len(result_funds) > MAX_FUNDS:
+              print(f'Truncating from {len(result_funds)} to {MAX_FUNDS} funds')
+              result_funds = result_funds[:MAX_FUNDS]
+
+          result = {
+              'last_update': now_bj.strftime('%Y-%m-%d %H:%M:%S'),
+              'last_trade_date': ed,
+              'funds': result_funds,
+          }
+
+          with open('data/hold-count-ranking.json', 'w', encoding='utf-8') as f:
+              json.dump(result, f, ensure_ascii=False, indent=2)
+
+          print(f'Updated hold-count-ranking.json: {len(result_funds)} funds, last_trade_date={ed}')
+
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write('hold_count_updated=true\n')
+          EOF
+
       - name: Commit and push if changed
-        if: steps.fetch-data.outputs.data_updated == 'true'
+        if: steps.fetch-data.outputs.data_updated == 'true' || steps.fetch-hold-count.outputs.hold_count_updated == 'true'
         run: |
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git config user.name "github-actions[bot]"
-          git add data/streak-rank.json data/calibration-ratio.json
+          git add data/streak-rank.json data/calibration-ratio.json data/hold-count-ranking.json
           if git diff --staged --quiet; then
             echo "No changes to commit"
           else
