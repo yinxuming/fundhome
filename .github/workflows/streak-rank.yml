@@ -195,6 +195,12 @@ jobs:
                   range_gain_str = fields[3].strip() if len(fields) > 3 else ''
                   # fields[9] 是区间结束日期，fields[10] 是区间结束单位净值
                   nav_date = fields[9].strip() if len(fields) > 9 else ed
+                  # TODO 593: 提取单位净值（fields[10]），用于生成 fund-nav-cache.json
+                  unit_nav_str = fields[10].strip() if len(fields) > 10 else ''
+                  try:
+                      unit_nav = float(unit_nav_str) if unit_nav_str else None
+                  except ValueError:
+                      unit_nav = None
 
                   if not fund_code:
                       continue
@@ -212,6 +218,7 @@ jobs:
                           'fund_name': fund_name,
                           'daily_gain': None,
                           'nav_date': nav_date,
+                          'unit_nav': unit_nav,
                       }
                   else:
                       all_funds[fund_code] = {
@@ -219,6 +226,7 @@ jobs:
                           'fund_name': fund_name,
                           'daily_gain': range_gain,
                           'nav_date': nav_date,
+                          'unit_nav': unit_nav,
                       }
 
               if page * page_size >= all_records or len(datas) < page_size:
@@ -386,6 +394,25 @@ jobs:
               json.dump(result, f, ensure_ascii=False, indent=2)
 
           print(f'Updated streak rank: {len(result_funds)} funds, last_trade_date={ed}')
+
+          # TODO 593: 生成 fund-nav-cache.json（最小化基金净值缓存）
+          # 格式：{ "date": "2026-07-30", "funds": { "000001": { "n": 1.2345, "g": 0.56 }, ... } }
+          # n=单位净值, g=日涨幅(%)，仅包含有净值数据的基金，最小化 JSON 体积
+          nav_cache = {
+              'date': ed.isoformat(),
+              'funds': {}
+          }
+          for code, info in all_funds.items():
+              unit_nav = info.get('unit_nav')
+              daily_gain = info.get('daily_gain')
+              if unit_nav is not None and unit_nav > 0:
+                  nav_cache['funds'][code] = {
+                      'n': round(unit_nav, 4),
+                      'g': round(daily_gain, 2) if daily_gain is not None else None,
+                  }
+          with open('data/fund-nav-cache.json', 'w', encoding='utf-8') as f:
+              json.dump(nav_cache, f, ensure_ascii=False, separators=(',', ':'))
+          print(f'Updated fund-nav-cache: {len(nav_cache["funds"])} funds, date={nav_cache["date"]}')
 
           # ========== 估值校准计算 ==========
           # 数据源：调用 FundValuationLast 批量接口获取估算涨幅(GSZZL)，
@@ -762,7 +789,7 @@ jobs:
         run: |
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git config user.name "github-actions[bot]"
-          git add data/streak-rank.json data/calibration-ratio.json data/hold-count-ranking.json
+          git add data/streak-rank.json data/calibration-ratio.json data/hold-count-ranking.json data/fund-nav-cache.json
           if git diff --staged --quiet; then
             echo "No changes to commit"
           else

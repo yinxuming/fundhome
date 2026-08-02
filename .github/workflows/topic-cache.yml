@@ -3,7 +3,7 @@ name: Update Topic Cache
 on:
   schedule:
     - cron: '37 8 * * 1-5'
-    - cron: '38 9 * * 1-5'
+    - cron: '37 12 * * 1-5'
   workflow_dispatch:
 
 permissions:
@@ -162,11 +162,17 @@ jobs:
               for d in sorted_dates[30:]:
                   del daily_gains[d]
 
+              # TODO 593: 同时保存 W/M/Q/Y/SY 阶段涨幅（每次覆盖最新值，不累积）
               result[name] = {
                   'id': code,
                   'name': name,
                   'date': now_str,
-                  'dailyGains': daily_gains
+                  'dailyGains': daily_gains,
+                  'W': round(item.get('W', 0), 2),
+                  'M': round(item.get('M', 0), 2),
+                  'Q': round(item.get('Q', 0), 2),
+                  'Y': round(item.get('Y', 0), 2),
+                  'SY': round(item.get('SY', 0), 2),
               }
 
           with open('data/topic-cache.json', 'w', encoding='utf-8') as f:
