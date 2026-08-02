@@ -101,44 +101,60 @@ jobs:
         id: fetch-data
         run: |
           mkdir -p data
-          python3 << 'EOF'
+          python3 << 'PYEOF'
           import json, urllib.request, datetime, sys, zoneinfo
 
           tz_bj = zoneinfo.ZoneInfo('Asia/Shanghai')
           now_bj = datetime.datetime.now(tz_bj)
-          today = now_bj.date().isoformat()
           now_str = now_bj.strftime('%Y-%m-%d %H:%M:%S')
 
-          url = 'https://api.fund.eastmoney.com/ztjj/GetZTJJListNew?tt=0&dt=syl&st=D&_=' + str(int(now_bj.timestamp() * 1000))
-          req = urllib.request.Request(url, headers={
-              'Referer': 'https://fund.eastmoney.com/',
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-          })
-
-          try:
+          # Helper: fetch topic API
+          def fetch_topic(st):
+              url = 'https://api.fund.eastmoney.com/ztjj/GetZTJJListNew?tt=0&dt=syl&st=' + st + '&_=' + str(int(now_bj.timestamp() * 1000))
+              req = urllib.request.Request(url, headers={
+                  'Referer': 'https://fund.eastmoney.com/',
+                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+              })
               with urllib.request.urlopen(req, timeout=30) as resp:
                   text = resp.read().decode('utf-8')
-          except Exception as e:
-              print(f'Fetch failed: {e}', file=sys.stderr)
-              sys.exit(1)
+              if '(' in text and ')' in text:
+                  text = text[text.index('(')+1:text.rindex(')')]
+              data = json.loads(text)
+              if data.get('ErrCode') != 0:
+                  print(f'API error for st={st}: ErrCode={data.get("ErrCode")}', file=sys.stderr)
+                  return []
+              return data.get('Data', [])
 
-          if '(' in text and ')' in text:
-              start = text.index('(')
-              end = text.rindex(')')
-              json_str = text[start+1:end]
-          else:
-              json_str = text
-          data = json.loads(json_str)
-
-          if data.get('ErrCode') != 0:
-              print(f'API error: ErrCode={data.get("ErrCode")}', file=sys.stderr)
-              sys.exit(1)
-
-          items = data.get('Data', [])
+          # 1. Fetch daily gains (st=D)
+          items = fetch_topic('D')
           if not items:
-              print('No data returned', file=sys.stderr)
+              print('No daily data returned', file=sys.stderr)
               sys.exit(1)
 
+          # 2. Determine latest trading day from first item's date
+          # The API returns 'PDATE' field (YYYY-MM-DD) for the latest trading date
+          latest_trade_date = items[0].get('PDATE', '')
+          if not latest_trade_date:
+              latest_trade_date = now_bj.date().isoformat()
+          print(f'Latest trade date from API: {latest_trade_date}')
+
+          # 3. Fetch period gains (W/M/Q/Y/SY) separately
+          period_gains = {}  # { INDEXCODE: { W, M, Q, Y, SY } }
+          for st in ('W', 'M', 'Q', 'Y', 'SY'):
+              period_items = fetch_topic(st)
+              if not period_items:
+                  print(f'Warning: No data for st={st}', file=sys.stderr)
+                  continue
+              for item in period_items:
+                  code = item['INDEXCODE']
+                  if code not in period_gains:
+                      period_gains[code] = {}
+                  val = item.get(st, item.get('D'))
+                  if val is not None:
+                      period_gains[code][st] = round(val, 2)
+              print(f'Fetched {len(period_items)} items for st={st}')
+
+          # 4. Load existing cache
           existing = {}
           try:
               with open('data/topic-cache.json') as f:
@@ -146,6 +162,7 @@ jobs:
           except FileNotFoundError:
               pass
 
+          # 5. Build result
           result = {}
           for item in items:
               name = item['INDEXNAME']
@@ -156,30 +173,31 @@ jobs:
               old_gains = old_entry.get('dailyGains', {}) if isinstance(old_entry, dict) else {}
 
               daily_gains = dict(old_gains)
-              daily_gains[today] = gain
+              # Use latest_trade_date as key, not actual date
+              daily_gains[latest_trade_date] = gain
 
               sorted_dates = sorted(daily_gains.keys(), reverse=True)
               for d in sorted_dates[30:]:
                   del daily_gains[d]
 
-              # TODO 593: 同时保存 W/M/Q/Y/SY 阶段涨幅（每次覆盖最新值，不累积）
+              pg = period_gains.get(code, {})
               result[name] = {
                   'id': code,
                   'name': name,
                   'date': now_str,
                   'dailyGains': daily_gains,
-                  'W': round(item.get('W', 0), 2),
-                  'M': round(item.get('M', 0), 2),
-                  'Q': round(item.get('Q', 0), 2),
-                  'Y': round(item.get('Y', 0), 2),
-                  'SY': round(item.get('SY', 0), 2),
+                  'W': pg.get('W', 0),
+                  'M': pg.get('M', 0),
+                  'Q': pg.get('Q', 0),
+                  'Y': pg.get('Y', 0),
+                  'SY': pg.get('SY', 0),
               }
 
           with open('data/topic-cache.json', 'w', encoding='utf-8') as f:
               json.dump(result, f, ensure_ascii=False, indent=2)
 
-          print(f'Updated {len(result)} topics, date={now_str}')
-          EOF
+          print(f'Updated {len(result)} topics, date={now_str}, trade_date={latest_trade_date}')
+          PYEOF
           echo "data_updated=true" >> "$GITHUB_OUTPUT"
 
       - name: Commit and push if changed
