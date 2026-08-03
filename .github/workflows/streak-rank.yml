@@ -66,12 +66,13 @@ jobs:
               f.write(f'ed={ed.isoformat()}\n')
               f.write(f'sd={sd.isoformat()}\n')
 
-          # 检查是否已完成：streak-rank.json 和 calibration-ratio.json 都需要更新到 ed
-          # 只有两者都已完成（last_trade_date == ed 且数据非空）才跳过
+          # 检查是否已完成：streak-rank.json、calibration-ratio.json 和 fund-nav-cache.json 都需要更新到 ed
+          # 三者都已完成（last_trade_date/date == ed 且数据非空）才跳过
           # 兜底：上次异常写入（last_trade_date 更新但数据空）时强制重试
           already_done = 'false'
           streak_done = False
           calib_done = False
+          nav_cache_done = False
 
           try:
               with open('data/streak-rank.json', encoding='utf-8') as f:
@@ -107,9 +108,32 @@ jobs:
           except Exception as e:
               print(f'Calibration check failed: {e}')
 
-          if streak_done and calib_done:
+          try:
+              with open('data/fund-nav-cache.json', encoding='utf-8') as f:
+                  data = json.load(f)
+              nav_date = data.get('date', '')
+              funds = data.get('funds', {})
+              if nav_date == ed.isoformat() and len(funds) > 0:
+                  nav_cache_done = True
+                  print(f'Fund nav cache done: date={nav_date}, funds={len(funds)}')
+              elif nav_date == ed.isoformat() and len(funds) == 0:
+                  print(f'Fund nav cache retry needed: date={nav_date} but funds empty')
+              else:
+                  print(f'Fund nav cache not done: date={nav_date} != ed={ed.isoformat()}')
+          except FileNotFoundError:
+              print('No existing fund-nav-cache.json')
+          except Exception as e:
+              print(f'Fund nav cache check failed: {e}')
+
+          if streak_done and calib_done and nav_cache_done:
               already_done = 'true'
-              print('Both streak-rank and calibration are up-to-date, skip fetch')
+              print('All streak-rank, calibration and fund-nav-cache are up-to-date, skip fetch')
+          else:
+              missing = []
+              if not streak_done: missing.append('streak-rank')
+              if not calib_done: missing.append('calibration')
+              if not nav_cache_done: missing.append('fund-nav-cache')
+              print(f'Need to fetch data (missing: {", ".join(missing)})')
 
           with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
               f.write(f'already_done={already_done}\n')
