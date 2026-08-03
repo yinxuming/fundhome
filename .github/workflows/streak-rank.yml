@@ -808,12 +808,149 @@ jobs:
               f.write('hold_count_updated=true\n')
           EOF
 
+      # TODO 604: 拉取养基宝5个榜单（涨幅/跌幅/热门/ETF/持有）缓存到 data/yjb-rankings.json
+      # 未登录养基宝的前端用户可从 GitHub Pages 加载该缓存查看榜单数据
+      # 凭证同样使用 YJB_WX_WXUK 和 YJB_WX_COOKIE（与持有榜历史趋势步骤共用）
+      - name: Fetch yjb rankings
+        if: steps.check.outputs.already_done != 'true'
+        id: fetch-yjb-rankings
+        env:
+          ED: ${{ steps.check.outputs.ed }}
+          YJB_WX_WXUK: ${{ secrets.YJB_WX_WXUK }}
+          YJB_WX_COOKIE: ${{ secrets.YJB_WX_COOKIE }}
+        run: |
+          mkdir -p data
+          python3 << 'EOF'
+          import json, urllib.request, urllib.parse, sys, datetime, zoneinfo, os, re, hashlib
+
+          tz_bj = zoneinfo.ZoneInfo('Asia/Shanghai')
+          now_bj = datetime.datetime.now(tz_bj)
+
+          ed = os.environ.get('ED', '')
+          wxuk = os.environ.get('YJB_WX_WXUK', '')
+          cookie = os.environ.get('YJB_WX_COOKIE', '')
+
+          # 凭证未配置时跳过（不影响主流程）
+          if not wxuk or not cookie:
+              print('YJB_WX_WXUK or YJB_WX_COOKIE not set, skip yjb rankings fetch')
+              with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+                  f.write('yjb_rankings_updated=false\n')
+              sys.exit(0)
+
+          # 从 cookie 中提取 XSRF-TOKEN
+          xsrf_match = re.search(r'XSRF-TOKEN=([^;]+)', cookie)
+          if not xsrf_match:
+              print('XSRF-TOKEN not found in cookie, skip', file=sys.stderr)
+              with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+                  f.write('yjb_rankings_updated=false\n')
+              sys.exit(0)
+          try:
+              xsrf_token = urllib.parse.unquote(xsrf_match.group(1))
+          except Exception:
+              xsrf_token = xsrf_match.group(1)
+
+          YJB_WX_BASE = 'https://wx.yangjibao.com/wxapi'
+          YJB_WX_SECRET = 'FI1IUyhfbwOXiAkv1ZUR5WwmlIEsztLn'
+          UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36 NetType/WIFI MicroMessenger/7.0.20.1781(0x6700143B) WindowsWechat(0x63090a13)'
+
+          def build_headers(url_path):
+              """构建带签名的请求 headers"""
+              timestamp = int(now_bj.timestamp())
+              sign_str = YJB_WX_BASE + url_path + wxuk + YJB_WX_SECRET + str(timestamp)
+              request_sign = hashlib.sha256(sign_str.encode('utf-8')).hexdigest()
+              return {
+                  'Host': 'wx.yangjibao.com',
+                  'Cookie': cookie,
+                  'authorization': wxuk,
+                  'x-xsrf-token': xsrf_token,
+                  'request-time': str(timestamp),
+                  'request-sign': request_sign,
+                  'accept': 'application/json, text/plain, */*',
+                  'content-type': 'application/json',
+                  'version': 'yjb_wxfwh-2.0.3',
+                  'user-agent': UA,
+                  'sec-fetch-site': 'same-origin',
+                  'sec-fetch-mode': 'cors',
+                  'sec-fetch-dest': 'empty',
+                  'referer': 'https://wx.yangjibao.com/',
+                  'accept-language': 'zh-CN,zh;q=0.9',
+              }
+
+          def fetch_ranking(url_path, ranking_name):
+              """请求一个榜单接口并返回 data 部分"""
+              url = f'{YJB_WX_BASE}{url_path}'
+              headers = build_headers(url_path)
+              req = urllib.request.Request(url, headers=headers)
+              try:
+                  with urllib.request.urlopen(req, timeout=30) as resp:
+                      raw = resp.read().decode('utf-8')
+                  result = json.loads(raw)
+              except Exception as e:
+                  print(f'Fetch {ranking_name} ranking failed: {e}', file=sys.stderr)
+                  return None
+              if result.get('code') != 200:
+                  print(f'{ranking_name} ranking API error: code={result.get("code")}, message={result.get("message")}', file=sys.stderr)
+                  return None
+              return result.get('data')
+
+          # 防重复：如果 yjb-rankings.json 的 date == ed，跳过
+          try:
+              with open('data/yjb-rankings.json', encoding='utf-8') as f:
+                  existing = json.load(f)
+              if existing.get('date') == ed:
+                  print(f'YJB rankings already updated for ed={ed}, skip')
+                  with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+                      f.write('yjb_rankings_updated=false\n')
+                  sys.exit(0)
+          except FileNotFoundError:
+              pass
+          except Exception as e:
+              print(f'Read existing yjb-rankings.json failed: {e}', file=sys.stderr)
+
+          # 拉取5个榜单
+          # 涨幅榜/跌幅榜：返回数组；热门榜/ETF榜：返回数组；持有榜：返回 {time, list, vip_label}
+          up_data = fetch_ranking('/market/v1/market-ranking/fund-up-ranking?type=distinct', 'up')
+          down_data = fetch_ranking('/market/v1/market-ranking/fund-down-ranking?type=distinct', 'down')
+          hot_data = fetch_ranking('/market/v1/market-ranking/hold-fund-up-down?page=1&per_page=100', 'hot')
+          etf_data = fetch_ranking('/market/v1/market-ranking/etf-ranking?page=1&per_page=50', 'etf')
+          hold_count_data = fetch_ranking('/fund_hold_ranking?page=1&per_page=100', 'holdCount')
+
+          # 至少有1个榜单成功才写入文件
+          success_count = sum(1 for d in [up_data, down_data, hot_data, etf_data, hold_count_data] if d is not None)
+          if success_count == 0:
+              print('All YJB rankings fetch failed, skip update', file=sys.stderr)
+              with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+                  f.write('yjb_rankings_updated=false\n')
+              sys.exit(0)
+
+          # 涨幅榜/跌幅榜/热门榜/ETF榜：data 为数组；持有榜：data 为 {time, list, vip_label}
+          result = {
+              'date': ed,
+              'last_update': now_bj.strftime('%Y-%m-%d %H:%M:%S'),
+              'up': up_data if isinstance(up_data, list) else [],
+              'down': down_data if isinstance(down_data, list) else [],
+              'hot': hot_data if isinstance(hot_data, list) else [],
+              'etf': etf_data if isinstance(etf_data, list) else [],
+              'holdCount': hold_count_data if isinstance(hold_count_data, dict) else None,
+          }
+
+          with open('data/yjb-rankings.json', 'w', encoding='utf-8') as f:
+              json.dump(result, f, ensure_ascii=False, separators=(',', ':'))
+
+          print(f'Updated yjb-rankings.json: up={len(result["up"])}, down={len(result["down"])}, '
+                f'hot={len(result["hot"])}, etf={len(result["etf"])}, '
+                f'holdCount={"yes" if result["holdCount"] else "no"}, date={ed}')
+
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write('yjb_rankings_updated=true\n')
+          EOF
+
       - name: Commit and push if changed
-        if: steps.fetch-data.outputs.data_updated == 'true' || steps.fetch-hold-count.outputs.hold_count_updated == 'true'
+        if: steps.fetch-data.outputs.data_updated == 'true' || steps.fetch-hold-count.outputs.hold_count_updated == 'true' || steps.fetch-yjb-rankings.outputs.yjb_rankings_updated == 'true'
         run: |
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git config user.name "github-actions[bot]"
-          git add data/streak-rank.json data/calibration-ratio.json data/hold-count-ranking.json data/fund-nav-cache.json
+          git add data/streak-rank.json data/calibration-ratio.json data/hold-count-ranking.json data/fund-nav-cache.json data/yjb-rankings.json
           if git diff --staged --quiet; then
             echo "No changes to commit"
           else
@@ -841,19 +978,19 @@ jobs:
           fi
 
       - name: Setup Pages
-        if: steps.fetch-data.outputs.data_updated == 'true'
+        if: steps.fetch-data.outputs.data_updated == 'true' || steps.fetch-yjb-rankings.outputs.yjb_rankings_updated == 'true'
         uses: actions/configure-pages@v5
         with:
           enablement: true
 
       - name: Upload artifact
-        if: steps.fetch-data.outputs.data_updated == 'true'
+        if: steps.fetch-data.outputs.data_updated == 'true' || steps.fetch-yjb-rankings.outputs.yjb_rankings_updated == 'true'
         uses: actions/upload-pages-artifact@v3
         with:
           path: .
 
       - name: Deploy to GitHub Pages
-        if: steps.fetch-data.outputs.data_updated == 'true'
+        if: steps.fetch-data.outputs.data_updated == 'true' || steps.fetch-yjb-rankings.outputs.yjb_rankings_updated == 'true'
         id: deployment
         uses: actions/deploy-pages@v4
 
