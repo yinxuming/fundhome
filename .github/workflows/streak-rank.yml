@@ -423,7 +423,7 @@ jobs:
           # 格式：{ "date": "2026-07-30", "funds": { "000001": { "n": 1.2345, "g": 0.56 }, ... } }
           # n=单位净值, g=日涨幅(%)，仅包含有净值数据的基金，最小化 JSON 体积
           nav_cache = {
-              'date': ed.isoformat(),
+              'date': ed,  # ed 是字符串（YYYY-MM-DD），来自环境变量 ED
               'funds': {}
           }
           for code, info in all_funds.items():
