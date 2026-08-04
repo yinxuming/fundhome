@@ -907,23 +907,22 @@ jobs:
           except Exception as e:
               print(f'Read existing yjb-rankings.json failed: {e}', file=sys.stderr)
 
-          # 拉取5个榜单
-          # 涨幅榜/跌幅榜：返回数组；热门榜/ETF榜：返回数组；持有榜：返回 {time, list, vip_label}
+          # TODO 606: 拉取4个榜单（涨幅/跌幅/热门/ETF），持有榜使用已存在的 hold-count-ranking.json
+          # 持有榜数据由单独的 Fetch hold count ranking 步骤生成到 data/hold-count-ranking.json
           up_data = fetch_ranking('/market/v1/market-ranking/fund-up-ranking?type=distinct', 'up')
           down_data = fetch_ranking('/market/v1/market-ranking/fund-down-ranking?type=distinct', 'down')
           hot_data = fetch_ranking('/market/v1/market-ranking/hold-fund-up-down?page=1&per_page=100', 'hot')
           etf_data = fetch_ranking('/market/v1/market-ranking/etf-ranking?page=1&per_page=50', 'etf')
-          hold_count_data = fetch_ranking('/fund_hold_ranking?page=1&per_page=100', 'holdCount')
 
           # 至少有1个榜单成功才写入文件
-          success_count = sum(1 for d in [up_data, down_data, hot_data, etf_data, hold_count_data] if d is not None)
+          success_count = sum(1 for d in [up_data, down_data, hot_data, etf_data] if d is not None)
           if success_count == 0:
               print('All YJB rankings fetch failed, skip update', file=sys.stderr)
               with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
                   f.write('yjb_rankings_updated=false\n')
               sys.exit(0)
 
-          # 涨幅榜/跌幅榜/热门榜/ETF榜：data 为数组；持有榜：data 为 {time, list, vip_label}
+          # 涨幅榜/跌幅榜/热门榜/ETF榜：data 为数组
           result = {
               'date': ed,
               'last_update': now_bj.strftime('%Y-%m-%d %H:%M:%S'),
@@ -931,15 +930,13 @@ jobs:
               'down': down_data if isinstance(down_data, list) else [],
               'hot': hot_data if isinstance(hot_data, list) else [],
               'etf': etf_data if isinstance(etf_data, list) else [],
-              'holdCount': hold_count_data if isinstance(hold_count_data, dict) else None,
           }
 
           with open('data/yjb-rankings.json', 'w', encoding='utf-8') as f:
               json.dump(result, f, ensure_ascii=False, separators=(',', ':'))
 
           print(f'Updated yjb-rankings.json: up={len(result["up"])}, down={len(result["down"])}, '
-                f'hot={len(result["hot"])}, etf={len(result["etf"])}, '
-                f'holdCount={"yes" if result["holdCount"] else "no"}, date={ed}')
+                f'hot={len(result["hot"])}, etf={len(result["etf"])}, date={ed}')
 
           with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
               f.write('yjb_rankings_updated=true\n')
