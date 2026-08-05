@@ -764,16 +764,19 @@ jobs:
           existing_map = {f['fund_code']: f for f in existing.get('funds', [])}
 
           # 本次榜单中的基金（按当前排名顺序保留）
+          # TODO 610: 同时记录每日排名（hold_ranks），用于前端计算近1周排名变化
           result_funds = []
-          for item in hold_list:
+          for idx, item in enumerate(hold_list):
               code = item.get('code', '').strip()
               if not code:
                   continue
               name = item.get('name', '')
               count = item.get('near_1m_hold_count_num', 0)
+              rank = idx + 1  # 排名从1开始
 
               old = existing_map.get(code, {})
               old_counts = old.get('hold_counts', {})
+              old_ranks = old.get('hold_ranks', {})
 
               # 追加当日人数（仅当该日期不存在时才追加，避免重复）
               if ed not in old_counts:
@@ -781,10 +784,17 @@ jobs:
               else:
                   new_counts = old_counts
 
+              # 追加当日排名（仅当该日期不存在时才追加）
+              if ed not in old_ranks:
+                  new_ranks = {**old_ranks, ed: rank}
+              else:
+                  new_ranks = old_ranks
+
               result_funds.append({
                   'fund_code': code,
                   'fund_name': name,
                   'hold_counts': new_counts,
+                  'hold_ranks': new_ranks,
               })
 
           # 限制基金数 ≤ 1000（按当前排名截断，末尾基金及历史一并移除）
