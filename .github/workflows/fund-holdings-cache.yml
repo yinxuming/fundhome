@@ -1,0 +1,377 @@
+name: Update Fund Holdings Cache
+
+on:
+  schedule:
+    # 主任务：北京时间 1/28、4/28、7/28、10/28 凌晨4点（UTC 20:00 前一天）
+    - cron: '0 20 27 1,4,7,10 *'
+    # 补全任务：北京时间 2/2、5/2、8/2、11/2 凌晨4点（UTC 20:00 前一天）
+    - cron: '0 20 1 2,5,8,11 *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: fund-holdings-cache
+  cancel-in-progress: false
+
+jobs:
+  update-fund-holdings:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Pull latest changes
+        run: |
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git pull --rebase origin main || echo "git pull failed, continue with checkout state"
+
+      - name: Fetch fund holdings data
+        id: fetch-data
+        run: |
+          mkdir -p data
+          python3 << 'PYEOF'
+          import json, urllib.request, urllib.parse, sys, datetime, zoneinfo, os, re, time, random
+
+          tz_bj = zoneinfo.ZoneInfo('Asia/Shanghai')
+          today = datetime.datetime.now(tz_bj).date()
+          today_str = today.isoformat()
+
+          # 判断是否为补全任务（2/2, 5/2, 8/2, 11/2）
+          makeup_dates = [(2,2), (5,2), (8,2), (11,2)]
+          is_makeup = (today.month, today.day) in makeup_dates
+          print(f'Run date: {today_str}, is_makeup: {is_makeup}')
+
+          # ========== 1. 获取全部基金代码 ==========
+          def hash_v(s):
+              h = 0
+              for c in s:
+                  h = ((h << 5) - h) + ord(c)
+                  h &= 0xFFFFFFFF
+              return str(h)
+
+          all_funds = {}
+          page = 1
+          page_size = 10000
+          while True:
+              v = hash_v(today_str + str(page))
+              params = {
+                  'op': 'ph', 'dt': 'kf', 'ft': 'all', 'rs': '', 'gs': '0',
+                  'sc': '1nzf', 'st': 'desc', 'pi': str(page), 'pn': str(page_size), 'dx': '1', 'v': v
+              }
+              url = 'https://fund.eastmoney.com/data/rankhandler.aspx?' + urllib.parse.urlencode(params)
+              req = urllib.request.Request(url, headers={
+                  'Referer': 'https://fund.eastmoney.com/data/diyfundranking.html',
+                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+              })
+              try:
+                  with urllib.request.urlopen(req, timeout=30) as resp:
+                      text = resp.read().decode('utf-8')
+              except Exception as e:
+                  print(f'Fetch failed page={page}: {e}', file=sys.stderr)
+                  break
+
+              datas_match = re.search(r'datas:\s*(\[.*?\])\s*,\s*allRecords', text, re.DOTALL)
+              if not datas_match:
+                  print(f'No datas array found page={page}', file=sys.stderr)
+                  break
+              try:
+                  datas = json.loads(datas_match.group(1))
+              except json.JSONDecodeError as e:
+                  print(f'datas parse failed page={page}: {e}', file=sys.stderr)
+                  break
+              if not datas:
+                  break
+
+              all_records_match = re.search(r'allRecords:\s*(\d+)', text)
+              all_records = int(all_records_match.group(1)) if all_records_match else 0
+
+              for item in datas:
+                  fields = item.split(',')
+                  if len(fields) < 2:
+                      continue
+                  fund_code = fields[0].strip()
+                  fund_name = fields[1].strip()
+                  if fund_code:
+                      all_funds[fund_code] = fund_name
+
+              if page * page_size >= all_records or len(datas) < page_size:
+                  break
+              page += 1
+
+          print(f'Total funds fetched: {len(all_funds)}')
+          if not all_funds:
+              print('No funds fetched, abort', file=sys.stderr)
+              sys.exit(0)
+
+          # ========== 2. 批量获取基金类型和规模 ==========
+          fund_details = {}  # {code: {type: str, size: str}}
+          batch_size = 30
+          fund_codes_list = list(all_funds.keys())
+          for i in range(0, len(fund_codes_list), batch_size):
+              batch = fund_codes_list[i:i + batch_size]
+              fcodes = ','.join(batch)
+              url = f'https://fundmobapi.eastmoney.com/FundMNewApi/FundMNFInfo?pageIndex=1&pageSize=30&appType=ttjj&product=EFund&plat=Android&deviceid=fundhome&Version=1&FCodes={fcodes}'
+              req = urllib.request.Request(url, headers={
+                  'Referer': 'https://fund.eastmoney.com/',
+                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+              })
+              try:
+                  with urllib.request.urlopen(req, timeout=30) as resp:
+                      data = json.loads(resp.read().decode('utf-8'))
+                  err_code = data.get('ErrCode', data.get('errorCode', -1))
+                  datas = data.get('Datas', data.get('data', []))
+                  if err_code == 0 and isinstance(datas, list):
+                      for item in datas:
+                          fc = str(item.get('FCODE', item.get('fcode', ''))).strip()
+                          if not fc:
+                              continue
+                          ftype = str(item.get('FUNDTYPE', item.get('fundtype', ''))).strip()
+                          fscale = str(item.get('FSCALE', item.get('fscale', ''))).strip()
+                          fund_details[fc] = {'type': ftype, 'size': fscale}
+              except Exception as e:
+                  print(f'FundMNFInfo batch {i//batch_size + 1} failed: {e}', file=sys.stderr)
+
+              # 批量请求间隔0.3s
+              time.sleep(0.3)
+
+          print(f'Fund details fetched: {len(fund_details)}')
+
+          # 筛选权益类基金（排除债券型/货币型）
+          equity_funds = {}
+          for code, name in all_funds.items():
+              detail = fund_details.get(code, {})
+              ftype = detail.get('type', '')
+              # 排除债券型和货币型
+              if '债券' in ftype or '货币' in ftype:
+                  continue
+              equity_funds[code] = name
+          print(f'Equity funds after filter: {len(equity_funds)}')
+
+          # ========== 3. 加载已有缓存（断点续传） ==========
+          cache_file = 'data/fund-holdings-cache.json'
+          existing = {'last_update': '', 'main_run_date': '', 'funds': {}}
+          try:
+              with open(cache_file, encoding='utf-8') as f:
+                  existing = json.load(f)
+          except FileNotFoundError:
+              print('No existing cache file')
+          except Exception as e:
+              print(f'Read existing failed: {e}', file=sys.stderr)
+
+          existing_funds = existing.get('funds', {})
+          main_run_date = existing.get('main_run_date', '')
+
+          # 确定跳过日期
+          if is_makeup:
+              # 补全任务：跳过主任务中已成功更新的基金
+              skip_date = main_run_date
+              print(f'Makeup run: skip funds updated on {skip_date}')
+          else:
+              # 主任务：跳过今天已更新的基金（防止重复执行）
+              skip_date = today_str
+              existing['main_run_date'] = today_str
+              print(f'Main run: update all funds (main_run_date set to {today_str})')
+
+          # ========== 4. 获取基金重仓 ==========
+          def fetch_jjcc(fund_code):
+              """获取基金前十大重仓股，返回 holdings 列表或 None（请求失败）"""
+              url = f'https://fundf10.eastmoney.com/FundArchivesDatas.aspx?type=jjcc&code={fund_code}&topline=10&year=&month=&_={int(time.time()*1000)}'
+              req = urllib.request.Request(url, headers={
+                  'Referer': 'https://fund.eastmoney.com/',
+                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+              })
+              try:
+                  with urllib.request.urlopen(req, timeout=15) as resp:
+                      text = resp.read().decode('utf-8')
+              except Exception as e:
+                  return None  # 请求失败，需重试
+
+              # 提取 content 字段（HTML 表格）
+              content_match = re.search(r'content\s*:\s*"([\s\S]*?)"\s*,\s*arryear', text)
+              if not content_match:
+                  # 兜底：尝试匹配到下一个字段
+                  content_match = re.search(r'content\s*:\s*"([\s\S]*?)"\s*,', text)
+              if not content_match:
+                  return []  # 请求成功但无 content（可能无持仓数据）
+
+              html = content_match.group(1)
+              # 反转义 JS 字符串中的转义字符
+              html = html.replace('\\/', '/').replace('\\"', '"').replace('\\n', '\n')
+
+              # 解析表头，定位列索引
+              header_row = re.search(r'<thead[\s\S]*?<tr[\s\S]*?</tr>[\s\S]*?</thead>', html, re.IGNORECASE)
+              header_cells = []
+              if header_row:
+                  header_cells = [re.sub(r'<[^>]*>', '', th).strip() for th in re.findall(r'<th[^>]*>([\s\S]*?)</th>', header_row.group(0), re.IGNORECASE)]
+
+              idx_code = -1
+              idx_name = -1
+              idx_weight = -1
+              for i, h in enumerate(header_cells):
+                  t = h.replace(' ', '')
+                  if idx_code < 0 and ('股票代码' in t or '证券代码' in t):
+                      idx_code = i
+                  if idx_name < 0 and ('股票名称' in t or '证券名称' in t):
+                      idx_name = i
+                  if idx_weight < 0 and ('占净值比例' in t or '占比' in t):
+                      idx_weight = i
+
+              # 解析数据行
+              tbody = re.search(r'<tbody[\s\S]*?</tbody>', html, re.IGNORECASE)
+              if tbody:
+                  rows = re.findall(r'<tr[\s\S]*?</tr>', tbody.group(0), re.IGNORECASE)
+              else:
+                  rows = re.findall(r'<tr[\s\S]*?</tr>', html, re.IGNORECASE)
+
+              holdings = []
+              for row in rows:
+                  tds = [re.sub(r'<[^>]*>', '', td).strip() for td in re.findall(r'<td[^>]*>([\s\S]*?)</td>', row, re.IGNORECASE)]
+                  if not tds:
+                      continue
+
+                  code = ''
+                  name = ''
+                  weight = 0.0
+
+                  # 提取股票代码
+                  if idx_code >= 0 and idx_code < len(tds):
+                      m = re.search(r'(\d{6})', tds[idx_code])
+                      if m:
+                          code = m.group(1)
+                      else:
+                          m = re.search(r'(\d{5})', tds[idx_code])
+                          if m:
+                              code = m.group(1)
+                          else:
+                              m = re.search(r'\b([A-Za-z]{1,10})\b', tds[idx_code])
+                              if m:
+                                  code = m.group(1).upper()
+                  else:
+                      for td in tds:
+                          m = re.search(r'^\d{6}$', td)
+                          if m:
+                              code = m.group(0)
+                              break
+
+                  # 提取股票名称
+                  if idx_name >= 0 and idx_name < len(tds):
+                      name = tds[idx_name]
+                  elif code:
+                      for td in tds:
+                          if td and td != code and not re.search(r'\d+(?:\.\d+)?\s*%', td):
+                              name = td
+                              break
+
+                  # 提取持仓比例
+                  if idx_weight >= 0 and idx_weight < len(tds):
+                      wm = re.search(r'([\d.]+)\s*%', tds[idx_weight])
+                      if wm:
+                          weight = float(wm.group(1))
+                  else:
+                      for td in tds:
+                          wm = re.search(r'([\d.]+)\s*%', td)
+                          if wm:
+                              weight = float(wm.group(1))
+                              break
+
+                  if code or name:
+                      holdings.append([code, name, weight])
+
+              return holdings
+
+          # ========== 5. 逐基金获取持仓 ==========
+          updated_count = 0
+          skipped_count = 0
+          failed_count = 0
+          total = len(equity_funds)
+
+          for i, (fund_code, fund_name) in enumerate(equity_funds.items()):
+              # 断点续传：跳过已更新的基金
+              if skip_date and existing_funds.get(fund_code, {}).get('u') == skip_date:
+                  skipped_count += 1
+                  continue
+
+              if i % 100 == 0:
+                  print(f'Progress: {i}/{total}, updated={updated_count}, skipped={skipped_count}, failed={failed_count}')
+
+              # 3次重试
+              holdings = None
+              for retry in range(3):
+                  holdings = fetch_jjcc(fund_code)
+                  if holdings is not None:
+                      break
+                  time.sleep(1)
+
+              if holdings is None:
+                  failed_count += 1
+                  continue
+
+              # 获取基金规模
+              fund_size = fund_details.get(fund_code, {}).get('size', '')
+
+              # 保存数据
+              existing_funds[fund_code] = {
+                  'n': fund_name,
+                  's': fund_size,
+                  'u': today_str,
+                  'h': holdings
+              }
+              updated_count += 1
+
+              # 随机延迟1-2s（避免被封），无持仓基金短延迟
+              if holdings:
+                  time.sleep(random.uniform(1, 2))
+              else:
+                  time.sleep(0.3)
+
+          # ========== 6. 保存JSON ==========
+          existing['last_update'] = today_str
+          existing['updated_count'] = updated_count
+          existing['total_count'] = total
+
+          with open(cache_file, 'w', encoding='utf-8') as f:
+              json.dump(existing, f, ensure_ascii=False, separators=(',', ':'))
+
+          print(f'\\nDone: updated={updated_count}, skipped={skipped_count}, failed={failed_count}, total={total}')
+          print(f'Cache file: {cache_file}')
+
+          if updated_count > 0:
+              with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+                  f.write('data_updated=true\\n')
+          PYEOF
+
+      - name: Commit and push if changed
+        if: steps.fetch-data.outputs.data_updated == 'true'
+        run: |
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git add data/fund-holdings-cache.json
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            today=$(TZ='Asia/Shanghai' date +%Y-%m-%d)
+            git commit -m "chore: update fund holdings cache ${today}"
+            git push
+          fi
+
+      - name: Setup Pages
+        if: steps.fetch-data.outputs.data_updated == 'true'
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        if: steps.fetch-data.outputs.data_updated == 'true'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+
+      - name: Deploy to GitHub Pages
+        if: steps.fetch-data.outputs.data_updated == 'true'
+        id: deployment
+        uses: actions/deploy-pages@v4
