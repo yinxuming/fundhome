@@ -2,10 +2,10 @@ name: Update Fund Holdings Cache
 
 on:
   schedule:
-    # 主任务：北京时间 1/28、4/28、7/28、10/28 凌晨4点（UTC 20:00 前一天）
-    - cron: '0 20 27 1,4,7,10 *'
-    # 补全任务：北京时间 2/2、5/2、8/2、11/2 凌晨4点（UTC 20:00 前一天）
-    - cron: '0 20 1 2,5,8,11 *'
+    # 季度更新窗口：1/4/7/10月27-31日 + 2/5/8/11月1-5日，每天3次（北京4:00, 10:00, 16:00）
+    # 每次最长运行4.5小时，未完成的基金在下次运行继续（断点续传）
+    - cron: '0 20,2,8 27-31 1,4,7,10 *'
+    - cron: '0 20,2,8 1-5 2,5,8,11 *'
   workflow_dispatch:
 
 permissions:
@@ -38,15 +38,15 @@ jobs:
           mkdir -p data
           python3 << 'PYEOF'
           import json, urllib.request, urllib.parse, sys, datetime, zoneinfo, os, re, time, random
+          from concurrent.futures import ThreadPoolExecutor, as_completed
 
           tz_bj = zoneinfo.ZoneInfo('Asia/Shanghai')
           today = datetime.datetime.now(tz_bj).date()
           today_str = today.isoformat()
 
-          # 判断是否为补全任务（2/2, 5/2, 8/2, 11/2）
-          makeup_dates = [(2,2), (5,2), (8,2), (11,2)]
-          is_makeup = (today.month, today.day) in makeup_dates
-          print(f'Run date: {today_str}, is_makeup: {is_makeup}')
+          # 单次运行最大时长（秒），留1.5小时余量给commit/deploy步骤
+          MAX_RUNTIME = 4.5 * 3600
+          run_start_time = time.time()
 
           # ========== 1. 获取全部基金代码 ==========
           def hash_v(s):
@@ -110,51 +110,7 @@ jobs:
               print('No funds fetched, abort', file=sys.stderr)
               sys.exit(0)
 
-          # ========== 2. 批量获取基金类型和规模 ==========
-          fund_details = {}  # {code: {type: str, size: str}}
-          batch_size = 30
-          fund_codes_list = list(all_funds.keys())
-          for i in range(0, len(fund_codes_list), batch_size):
-              batch = fund_codes_list[i:i + batch_size]
-              fcodes = ','.join(batch)
-              url = f'https://fundmobapi.eastmoney.com/FundMNewApi/FundMNFInfo?pageIndex=1&pageSize=30&appType=ttjj&product=EFund&plat=Android&deviceid=fundhome&Version=1&FCodes={fcodes}'
-              req = urllib.request.Request(url, headers={
-                  'Referer': 'https://fund.eastmoney.com/',
-                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-              })
-              try:
-                  with urllib.request.urlopen(req, timeout=30) as resp:
-                      data = json.loads(resp.read().decode('utf-8'))
-                  err_code = data.get('ErrCode', data.get('errorCode', -1))
-                  datas = data.get('Datas', data.get('data', []))
-                  if err_code == 0 and isinstance(datas, list):
-                      for item in datas:
-                          fc = str(item.get('FCODE', item.get('fcode', ''))).strip()
-                          if not fc:
-                              continue
-                          ftype = str(item.get('FUNDTYPE', item.get('fundtype', ''))).strip()
-                          fscale = str(item.get('FSCALE', item.get('fscale', ''))).strip()
-                          fund_details[fc] = {'type': ftype, 'size': fscale}
-              except Exception as e:
-                  print(f'FundMNFInfo batch {i//batch_size + 1} failed: {e}', file=sys.stderr)
-
-              # 批量请求间隔0.3s
-              time.sleep(0.3)
-
-          print(f'Fund details fetched: {len(fund_details)}')
-
-          # 筛选权益类基金（排除债券型/货币型）
-          equity_funds = {}
-          for code, name in all_funds.items():
-              detail = fund_details.get(code, {})
-              ftype = detail.get('type', '')
-              # 排除债券型和货币型
-              if '债券' in ftype or '货币' in ftype:
-                  continue
-              equity_funds[code] = name
-          print(f'Equity funds after filter: {len(equity_funds)}')
-
-          # ========== 3. 加载已有缓存（断点续传） ==========
+          # ========== 2. 加载已有缓存（断点续传） ==========
           cache_file = 'data/fund-holdings-cache.json'
           existing = {'last_update': '', 'main_run_date': '', 'funds': {}}
           try:
@@ -168,18 +124,93 @@ jobs:
           existing_funds = existing.get('funds', {})
           main_run_date = existing.get('main_run_date', '')
 
-          # 确定跳过日期
-          if is_makeup:
-              # 补全任务：跳过主任务中已成功更新的基金
+          # 检查是否需要开始新季度的更新（上次主任务超过30天则重置）
+          if main_run_date:
+              try:
+                  main_date = datetime.date.fromisoformat(main_run_date)
+                  days_since_main = (today - main_date).days
+              except ValueError:
+                  days_since_main = 999
+              if days_since_main > 30:
+                  print(f'Previous main_run_date was {days_since_main} days ago, starting new quarter')
+                  main_run_date = ''
+
+          # 确定跳过日期：已在本季度更新过的基金（u >= main_run_date）直接跳过
+          if main_run_date:
               skip_date = main_run_date
-              print(f'Makeup run: skip funds updated on {skip_date}')
+              print(f'Continuing quarter run (main_run_date={main_run_date})')
           else:
-              # 主任务：跳过今天已更新的基金（防止重复执行）
               skip_date = today_str
               existing['main_run_date'] = today_str
-              print(f'Main run: update all funds (main_run_date set to {today_str})')
+              print(f'Starting new quarter (main_run_date={today_str})')
 
-          # ========== 4. 获取基金重仓 ==========
+          # ========== 3. 批量获取基金类型和规模（仅未缓存的基金） ==========
+          # 已缓存的基金之前已确认为权益类，无需重复获取
+          funds_needing_details = [code for code in all_funds if code not in existing_funds]
+          print(f'Funds needing details: {len(funds_needing_details)} (cached: {len(all_funds) - len(funds_needing_details)})')
+
+          fund_details = {}
+          if funds_needing_details:
+              batch_size = 30
+              for i in range(0, len(funds_needing_details), batch_size):
+                  batch = funds_needing_details[i:i + batch_size]
+                  fcodes = ','.join(batch)
+                  url = f'https://fundmobapi.eastmoney.com/FundMNewApi/FundMNFInfo?pageIndex=1&pageSize=30&appType=ttjj&product=EFund&plat=Android&deviceid=fundhome&Version=1&FCodes={fcodes}'
+                  req = urllib.request.Request(url, headers={
+                      'Referer': 'https://fund.eastmoney.com/',
+                      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                  })
+                  try:
+                      with urllib.request.urlopen(req, timeout=30) as resp:
+                          data = json.loads(resp.read().decode('utf-8'))
+                      err_code = data.get('ErrCode', data.get('errorCode', -1))
+                      datas = data.get('Datas', data.get('data', []))
+                      if err_code == 0 and isinstance(datas, list):
+                          for item in datas:
+                              fc = str(item.get('FCODE', item.get('fcode', ''))).strip()
+                              if not fc:
+                                  continue
+                              ftype = str(item.get('FUNDTYPE', item.get('fundtype', ''))).strip()
+                              fscale = str(item.get('FSCALE', item.get('fscale', ''))).strip()
+                              fund_details[fc] = {'type': ftype, 'size': fscale}
+                  except Exception as e:
+                      print(f'FundMNFInfo batch {i//batch_size + 1} failed: {e}', file=sys.stderr)
+                  time.sleep(0.3)
+
+          print(f'Fund details fetched: {len(fund_details)}')
+
+          # 筛选权益类基金（排除债券型/货币型）
+          equity_funds = {}
+          for code, name in all_funds.items():
+              if code in existing_funds:
+                  # 已缓存的基金，之前已确认为权益类
+                  equity_funds[code] = name
+              else:
+                  detail = fund_details.get(code, {})
+                  ftype = detail.get('type', '')
+                  if '债券' not in ftype and '货币' not in ftype:
+                      equity_funds[code] = name
+          print(f'Equity funds: {len(equity_funds)}')
+
+          # ========== 4. 预筛选待更新基金 ==========
+          funds_to_update = []
+          skipped_count = 0
+          for code, name in equity_funds.items():
+              fund_data = existing_funds.get(code, {})
+              u = fund_data.get('u', '')
+              if u and u >= skip_date:
+                  skipped_count += 1
+              else:
+                  funds_to_update.append((code, name))
+
+          total = len(equity_funds)
+          print(f'To update: {len(funds_to_update)}, already done: {skipped_count}, total: {total}')
+
+          if not funds_to_update:
+              print('All funds already updated this quarter, skipping run')
+              sys.exit(0)
+
+          # ========== 5. 获取基金重仓（并发 + 时间限制 + 增量写入） ==========
           def fetch_jjcc(fund_code):
               """获取基金前十大重仓股，返回 holdings 列表或 None（请求失败）"""
               url = f'https://fundf10.eastmoney.com/FundArchivesDatas.aspx?type=jjcc&code={fund_code}&topline=10&year=&month=&_={int(time.time()*1000)}'
@@ -190,22 +221,18 @@ jobs:
               try:
                   with urllib.request.urlopen(req, timeout=15) as resp:
                       text = resp.read().decode('utf-8')
-              except Exception as e:
-                  return None  # 请求失败，需重试
+              except Exception:
+                  return None
 
-              # 提取 content 字段（HTML 表格）
               content_match = re.search(r'content\s*:\s*"([\s\S]*?)"\s*,\s*arryear', text)
               if not content_match:
-                  # 兜底：尝试匹配到下一个字段
                   content_match = re.search(r'content\s*:\s*"([\s\S]*?)"\s*,', text)
               if not content_match:
-                  return []  # 请求成功但无 content（可能无持仓数据）
+                  return []
 
               html = content_match.group(1)
-              # 反转义 JS 字符串中的转义字符
               html = html.replace('\\/', '/').replace('\\"', '"').replace('\\n', '\n')
 
-              # 解析表头，定位列索引
               header_row = re.search(r'<thead[\s\S]*?<tr[\s\S]*?</tr>[\s\S]*?</thead>', html, re.IGNORECASE)
               header_cells = []
               if header_row:
@@ -223,7 +250,6 @@ jobs:
                   if idx_weight < 0 and ('占净值比例' in t or '占比' in t):
                       idx_weight = i
 
-              # 解析数据行
               tbody = re.search(r'<tbody[\s\S]*?</tbody>', html, re.IGNORECASE)
               if tbody:
                   rows = re.findall(r'<tr[\s\S]*?</tr>', tbody.group(0), re.IGNORECASE)
@@ -240,7 +266,6 @@ jobs:
                   name = ''
                   weight = 0.0
 
-                  # 提取股票代码
                   if idx_code >= 0 and idx_code < len(tds):
                       m = re.search(r'(\d{6})', tds[idx_code])
                       if m:
@@ -260,7 +285,6 @@ jobs:
                               code = m.group(0)
                               break
 
-                  # 提取股票名称
                   if idx_name >= 0 and idx_name < len(tds):
                       name = tds[idx_name]
                   elif code:
@@ -269,7 +293,6 @@ jobs:
                               name = td
                               break
 
-                  # 提取持仓比例
                   if idx_weight >= 0 and idx_weight < len(tds):
                       wm = re.search(r'([\d.]+)\s*%', tds[idx_weight])
                       if wm:
@@ -286,65 +309,105 @@ jobs:
 
               return holdings
 
-          # ========== 5. 逐基金获取持仓 ==========
-          updated_count = 0
-          skipped_count = 0
-          failed_count = 0
-          total = len(equity_funds)
-
-          for i, (fund_code, fund_name) in enumerate(equity_funds.items()):
-              # 断点续传：跳过已更新的基金
-              if skip_date and existing_funds.get(fund_code, {}).get('u') == skip_date:
-                  skipped_count += 1
-                  continue
-
-              if i % 100 == 0:
-                  print(f'Progress: {i}/{total}, updated={updated_count}, skipped={skipped_count}, failed={failed_count}')
-
-              # 3次重试
+          def fetch_fund_data(fund_code, fund_name):
+              """获取单只基金持仓（含3次重试，递增延迟）"""
               holdings = None
               for retry in range(3):
                   holdings = fetch_jjcc(fund_code)
                   if holdings is not None:
                       break
-                  time.sleep(1)
+                  time.sleep(1 + retry * 2)
+              return fund_code, fund_name, holdings
 
-              if holdings is None:
-                  failed_count += 1
-                  continue
+          # 并发配置
+          CONCURRENCY = 3          # 3个并发线程
+          BATCH_WRITE_THRESHOLD = 1000  # 每1000条写入一次文件
 
-              # 获取基金规模
-              fund_size = fund_details.get(fund_code, {}).get('size', '')
+          updated_count = 0
+          failed_count = 0
+          pending_writes = 0
+          time_limit_hit = False
 
-              # 保存数据
-              existing_funds[fund_code] = {
-                  'n': fund_name,
-                  's': fund_size,
-                  'u': today_str,
-                  'h': holdings
-              }
-              updated_count += 1
+          def save_cache():
+              """增量保存到文件（临时文件+原子替换，防止写入中断损坏）"""
+              existing['last_update'] = today_str
+              existing['updated_count'] = updated_count
+              existing['total_count'] = total
+              tmp_file = cache_file + '.tmp'
+              with open(tmp_file, 'w', encoding='utf-8') as f:
+                  json.dump(existing, f, ensure_ascii=False, separators=(',', ':'))
+              os.replace(tmp_file, cache_file)
 
-              # 随机延迟1-2s（避免被封），无持仓基金短延迟
-              if holdings:
-                  time.sleep(random.uniform(1, 2))
-              else:
-                  time.sleep(0.3)
+          print(f'Starting concurrent fetch: {len(funds_to_update)} funds, concurrency={CONCURRENCY}')
 
-          # ========== 6. 保存JSON ==========
-          existing['last_update'] = today_str
-          existing['updated_count'] = updated_count
-          existing['total_count'] = total
+          with ThreadPoolExecutor(max_workers=CONCURRENCY) as executor:
+              for i in range(0, len(funds_to_update), CONCURRENCY):
+                  # 检查时间限制
+                  elapsed = time.time() - run_start_time
+                  if elapsed > MAX_RUNTIME:
+                      print(f'Time limit reached ({elapsed/3600:.1f}h), saving checkpoint')
+                      time_limit_hit = True
+                      break
 
-          with open(cache_file, 'w', encoding='utf-8') as f:
-              json.dump(existing, f, ensure_ascii=False, separators=(',', ':'))
+                  batch = funds_to_update[i:i + CONCURRENCY]
+                  futures = {executor.submit(fetch_fund_data, fc, fn): (fc, fn) for fc, fn in batch}
 
-          print(f'\\nDone: updated={updated_count}, skipped={skipped_count}, failed={failed_count}, total={total}')
-          print(f'Cache file: {cache_file}')
+                  for future in as_completed(futures):
+                      try:
+                          fc, fn, holdings = future.result()
+                      except Exception as e:
+                          print(f'Error: {e}', file=sys.stderr)
+                          failed_count += 1
+                          continue
+
+                      if holdings is None:
+                          failed_count += 1
+                          continue
+
+                      # 基金规模：优先用本次获取的，回退到缓存中的
+                      fund_size = fund_details.get(fc, {}).get('size', '')
+                      if not fund_size:
+                          fund_size = existing_funds.get(fc, {}).get('s', '')
+
+                      existing_funds[fc] = {
+                          'n': fn,
+                          's': fund_size,
+                          'u': today_str,
+                          'h': holdings
+                      }
+                      updated_count += 1
+                      pending_writes += 1
+
+                  # 每1000条写入一次文件
+                  if pending_writes >= BATCH_WRITE_THRESHOLD:
+                      save_cache()
+                      print(f'  [Checkpoint] {updated_count} funds written (progress: {i + len(batch)}/{len(funds_to_update)})')
+                      pending_writes = 0
+
+                  # 进度日志（每50批输出一次）
+                  batch_num = i // CONCURRENCY
+                  if batch_num % 50 == 0:
+                      elapsed = time.time() - run_start_time
+                      print(f'Progress: batch {batch_num}, {i + len(batch)}/{len(funds_to_update)}, updated={updated_count}, failed={failed_count}, elapsed={elapsed/60:.0f}min')
+
+                  # 批次间随机延迟0.5-1s（避免被封）
+                  time.sleep(random.uniform(0.5, 1))
+
+          # ========== 6. 最终保存 ==========
+          save_cache()
+
+          quarter_done = sum(1 for f in existing_funds.values() if f.get('u', '') >= skip_date)
+          print(f'\\nDone: updated={updated_count}, failed={failed_count}, skipped={skipped_count}')
+          print(f'Quarter progress: {quarter_done}/{total} funds updated ({quarter_done*100//total}%)')
+          if time_limit_hit:
+              remaining = total - quarter_done
+              print(f'Time limit hit, {remaining} funds remaining for next run')
+          else:
+              print('All funds processed!')
 
           if updated_count > 0:
               with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
-                  f.write('data_updated=true\\n')
+                  f.write('data_updated=true\n')
           PYEOF
 
       - name: Commit and push if changed
