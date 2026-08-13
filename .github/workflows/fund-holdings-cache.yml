@@ -39,6 +39,7 @@ jobs:
           python3 << 'PYEOF'
           import json, urllib.request, urllib.parse, sys, datetime, zoneinfo, os, re, time, random
           from concurrent.futures import ThreadPoolExecutor, as_completed
+          from collections import defaultdict
 
           tz_bj = zoneinfo.ZoneInfo('Asia/Shanghai')
           today = datetime.datetime.now(tz_bj).date()
@@ -48,7 +49,60 @@ jobs:
           MAX_RUNTIME = 4.5 * 3600
           run_start_time = time.time()
 
-          # ========== 1. 获取全部基金代码 ==========
+          # ========== 去重函数（复用 streak-rank.yml 逻辑） ==========
+          def get_base_fund_name(fund_name):
+              """提取基金基础名称（去掉份额类别和币种后缀）"""
+              CURRENCY = r'(?:人民币|美元|美元汇|美元现钞)'
+              base = fund_name
+              base = re.sub(r'[A-Z]类' + CURRENCY + r'$', '', base).strip()
+              base = re.sub(r'\(.+?\)[A-Z]' + CURRENCY + r'$', '', base).strip()
+              base = re.sub(r'[A-Z]' + CURRENCY + r'$', '', base).strip()
+              patterns = [
+                  r'[A-Z]类$', r'[A-Z]$', r'\(.*?\)$',
+                  r'I$', r'II$', r'III$', r'IV$', r'V$',
+                  r'1$', r'2$', r'3$', r'4$', r'5$',
+              ]
+              for p in patterns:
+                  base = re.sub(p, '', base).strip()
+              base = re.sub(r'\(.+?\)$', '', base).strip()
+              return base
+
+          def fund_class_priority(fund_name):
+              """基金份额优先级（越小越高），C类优先。
+              复用 streak-rank.yml 的 has_class 实现，支持多种命名格式。"""
+              is_rmb = '人民币' in fund_name
+              is_usd = '美元' in fund_name
+              is_ab = bool(re.search(r'A/B|A\\B|\(A/B\)|\(A\\B\)', fund_name))
+
+              def has_class(letter):
+                  return bool(re.search(
+                      rf'{letter}[类(]|{letter}\((?:人民币|美元|美元汇|美元现钞)\)'
+                      rf'|(.+?){letter}(?:人民币|美元|美元汇|美元现钞)'
+                      rf'|(.+?){letter}$|(?:人民币|美元|美元汇|美元现钞){letter}$'
+                      rf'|(?<=[^a-zA-Z0-9]){letter}$', fund_name))
+
+              is_a = has_class('A') and not is_ab
+              is_c = has_class('C')
+              is_e = has_class('E')
+              is_d = has_class('D')
+
+              if is_c:
+                  return 0 if is_rmb else 10 if is_usd else 1
+              elif is_ab:
+                  return 2 if is_rmb else 10 if is_usd else 3
+              elif is_a:
+                  return 4 if is_rmb else 10 if is_usd else 5
+              elif is_e:
+                  return 6 if is_rmb else 10 if is_usd else 7
+              elif is_d:
+                  return 8 if is_rmb else 10 if is_usd else 9
+              return 10
+
+          def is_c_class(fund_name):
+              """判断是否为C类基金（优先级0或1，即C类人民币或C类）"""
+              return fund_class_priority(fund_name) in (0, 1)
+
+          # ========== 1. 获取全部基金代码 + 名称 + 规模 ==========
           def hash_v(s):
               h = 0
               for c in s:
@@ -56,6 +110,7 @@ jobs:
                   h &= 0xFFFFFFFF
               return str(h)
 
+          # all_funds: {code: {name, scale}}
           all_funds = {}
           page = 1
           page_size = 10000
@@ -98,8 +153,10 @@ jobs:
                       continue
                   fund_code = fields[0].strip()
                   fund_name = fields[1].strip()
+                  # field[24] = 基金规模（亿元）
+                  fund_scale = fields[24].strip() if len(fields) > 24 else ''
                   if fund_code:
-                      all_funds[fund_code] = fund_name
+                      all_funds[fund_code] = {'name': fund_name, 'scale': fund_scale}
 
               if page * page_size >= all_records or len(datas) < page_size:
                   break
@@ -110,9 +167,53 @@ jobs:
               print('No funds fetched, abort', file=sys.stderr)
               sys.exit(0)
 
-          # ========== 2. 加载已有缓存（断点续传） ==========
+          # ========== 2. 筛选权益类基金（按名称排除债券/货币） + C类去重 ==========
+          # 按名称排除债券型和货币型基金
+          equity_funds = {}
+          for code, info in all_funds.items():
+              name = info['name']
+              if '债' in name or '货币' in name:
+                  continue
+              equity_funds[code] = info
+          print(f'After bond/money filter: {len(equity_funds)}')
+
+          # C类去重：同名基金只保留优先级最高的（C类优先）
+          groups = defaultdict(list)
+          for code, info in equity_funds.items():
+              base = get_base_fund_name(info['name'])
+              groups[base].append((code, info))
+
+          deduped_funds = {}  # {code: {name, scale}}
+          # TODO 624: same_fund_to_c 替代 a2c_map，仅存有对应C类的映射（非C类→C类）
+          same_fund_to_c = {}  # {非C类code: C类code}
+          c2a_map = defaultdict(list)  # {C类code: [非C类code]}，用于scale回退
+
+          for base, group in groups.items():
+              if len(group) == 1:
+                  code, info = group[0]
+                  deduped_funds[code] = info
+              else:
+                  # 按优先级排序，取最高的（C类优先）
+                  sorted_group = sorted(group, key=lambda x: fund_class_priority(x[1]['name']))
+                  kept_code, kept_info = sorted_group[0]
+                  deduped_funds[kept_code] = kept_info
+                  # 构建同名基金→C类映射：仅当保留的是C类时，其他非C类指向它
+                  if is_c_class(kept_info['name']):
+                      for code, info in sorted_group[1:]:
+                          if not is_c_class(info['name']):
+                              same_fund_to_c[code] = kept_code
+                              c2a_map[kept_code].append(code)
+
+          print(f'After C-class dedup: {len(deduped_funds)} funds, same_fund_to_c mappings: {len(same_fund_to_c)}')
+
+          # ========== 3. 加载已有缓存（断点续传） ==========
+          # TODO 625: 拆分为 3 个独立文件，主数据只存消费方需要的字段
+          #   - fund-holdings-cache.json: 主数据（last_update + stocks + funds），消费方使用
+          #   - fund-holdings-cache-state.json: 定期任务状态（main_run_date + updates），仅YML使用
+          #   - same_fund_to_code_c.json: 同名基金→C类映射（每次全量覆盖）
           cache_file = 'data/fund-holdings-cache.json'
-          existing = {'last_update': '', 'main_run_date': '', 'funds': {}}
+          state_file = 'data/fund-holdings-cache-state.json'
+          existing = {'last_update': '', 'stocks': [], 'funds': {}}
           try:
               with open(cache_file, encoding='utf-8') as f:
                   existing = json.load(f)
@@ -122,7 +223,26 @@ jobs:
               print(f'Read existing failed: {e}', file=sys.stderr)
 
           existing_funds = existing.get('funds', {})
-          main_run_date = existing.get('main_run_date', '')
+          existing_stocks = existing.get('stocks', [])
+
+          # 加载定期任务状态文件（断点续传数据）
+          state = {'main_run_date': '', 'updated_count': 0, 'total_count': 0, 'updates': {}}
+          try:
+              with open(state_file, encoding='utf-8') as f:
+                  state = json.load(f)
+          except FileNotFoundError:
+              print('No existing state file')
+          except Exception as e:
+              print(f'Read existing state failed: {e}', file=sys.stderr)
+
+          existing_updates = state.get('updates', {})
+          main_run_date = state.get('main_run_date', '')
+
+          # 构建股票名称→序号查表（用于h字段36进制编码）
+          stock_name_to_idx = {}
+          for idx, name in enumerate(existing_stocks):
+              if name not in stock_name_to_idx:
+                  stock_name_to_idx[name] = idx
 
           # 检查是否需要开始新季度的更新（上次主任务超过30天则重置）
           if main_run_date:
@@ -135,75 +255,30 @@ jobs:
                   print(f'Previous main_run_date was {days_since_main} days ago, starting new quarter')
                   main_run_date = ''
 
-          # 确定跳过日期：已在本季度更新过的基金（u >= main_run_date）直接跳过
+          # 确定跳过日期：已在本季度更新过的基金直接跳过
+          # TODO 623: 使用顶层 updates 映射（逗号分隔字符串）替代每基金 u 字段
           if main_run_date:
               skip_date = main_run_date
               print(f'Continuing quarter run (main_run_date={main_run_date})')
           else:
               skip_date = today_str
-              existing['main_run_date'] = today_str
+              state['main_run_date'] = today_str
               print(f'Starting new quarter (main_run_date={today_str})')
 
-          # ========== 3. 批量获取基金类型和规模（仅未缓存的基金） ==========
-          # 已缓存的基金之前已确认为权益类，无需重复获取
-          funds_needing_details = [code for code in all_funds if code not in existing_funds]
-          print(f'Funds needing details: {len(funds_needing_details)} (cached: {len(all_funds) - len(funds_needing_details)})')
-
-          fund_details = {}
-          if funds_needing_details:
-              batch_size = 30
-              for i in range(0, len(funds_needing_details), batch_size):
-                  batch = funds_needing_details[i:i + batch_size]
-                  fcodes = ','.join(batch)
-                  url = f'https://fundmobapi.eastmoney.com/FundMNewApi/FundMNFInfo?pageIndex=1&pageSize=30&appType=ttjj&product=EFund&plat=Android&deviceid=fundhome&Version=1&FCodes={fcodes}'
-                  req = urllib.request.Request(url, headers={
-                      'Referer': 'https://fund.eastmoney.com/',
-                      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                  })
-                  try:
-                      with urllib.request.urlopen(req, timeout=30) as resp:
-                          data = json.loads(resp.read().decode('utf-8'))
-                      err_code = data.get('ErrCode', data.get('errorCode', -1))
-                      datas = data.get('Datas', data.get('data', []))
-                      if err_code == 0 and isinstance(datas, list):
-                          for item in datas:
-                              fc = str(item.get('FCODE', item.get('fcode', ''))).strip()
-                              if not fc:
-                                  continue
-                              ftype = str(item.get('FUNDTYPE', item.get('fundtype', ''))).strip()
-                              fscale = str(item.get('FSCALE', item.get('fscale', ''))).strip()
-                              fund_details[fc] = {'type': ftype, 'size': fscale}
-                  except Exception as e:
-                      print(f'FundMNFInfo batch {i//batch_size + 1} failed: {e}', file=sys.stderr)
-                  time.sleep(0.3)
-
-          print(f'Fund details fetched: {len(fund_details)}')
-
-          # 筛选权益类基金（排除债券型/货币型）
-          equity_funds = {}
-          for code, name in all_funds.items():
-              if code in existing_funds:
-                  # 已缓存的基金，之前已确认为权益类
-                  equity_funds[code] = name
-              else:
-                  detail = fund_details.get(code, {})
-                  ftype = detail.get('type', '')
-                  if '债券' not in ftype and '货币' not in ftype:
-                      equity_funds[code] = name
-          print(f'Equity funds: {len(equity_funds)}')
+          # 解析已更新的基金code集合（从 updates 字符串解析）
+          updates_str = existing_updates.get(skip_date, '')
+          updated_code_set = set(updates_str.split(',')) if updates_str else set()
 
           # ========== 4. 预筛选待更新基金 ==========
           funds_to_update = []
           skipped_count = 0
-          for code, name in equity_funds.items():
-              fund_data = existing_funds.get(code, {})
-              u = fund_data.get('u', '')
-              if u and u >= skip_date:
+          for code, info in deduped_funds.items():
+              if code in updated_code_set:
                   skipped_count += 1
               else:
-                  funds_to_update.append((code, name))
+                  funds_to_update.append((code, info))
 
-          total = len(equity_funds)
+          total = len(deduped_funds)
           print(f'To update: {len(funds_to_update)}, already done: {skipped_count}, total: {total}')
 
           if not funds_to_update:
@@ -309,7 +384,7 @@ jobs:
 
               return holdings
 
-          def fetch_fund_data(fund_code, fund_name):
+          def fetch_fund_data(fund_code, fund_info):
               """获取单只基金持仓（含3次重试，递增延迟）"""
               holdings = None
               for retry in range(3):
@@ -317,7 +392,7 @@ jobs:
                   if holdings is not None:
                       break
                   time.sleep(1 + retry * 2)
-              return fund_code, fund_name, holdings
+              return fund_code, fund_info, holdings
 
           # 并发配置
           CONCURRENCY = 3          # 3个并发线程
@@ -328,15 +403,45 @@ jobs:
           pending_writes = 0
           time_limit_hit = False
 
+          # TODO 625: 36进制编码函数
+          CHARS36 = '0123456789abcdefghijklmnopqrstuvwxyz'
+          def to_base36(n, width=3):
+              """将数字转为36进制定长字符串"""
+              if n < 0:
+                  n = 0
+              s = ''
+              if n == 0:
+                  s = '0'
+              else:
+                  while n > 0:
+                      s = CHARS36[n % 36] + s
+                      n //= 36
+              return s.rjust(width, '0')
+
+          same_fund_file = 'data/same_fund_to_code_c.json'
+
           def save_cache():
-              """增量保存到文件（临时文件+原子替换，防止写入中断损坏）"""
+              """事务式保存 3 个文件（先写所有临时文件，全部完成后原子替换）"""
+              # 1. 准备主数据（消费方使用：last_update + stocks + funds）
               existing['last_update'] = today_str
-              existing['updated_count'] = updated_count
-              existing['total_count'] = total
-              tmp_file = cache_file + '.tmp'
-              with open(tmp_file, 'w', encoding='utf-8') as f:
-                  json.dump(existing, f, ensure_ascii=False, separators=(',', ':'))
-              os.replace(tmp_file, cache_file)
+              existing['stocks'] = existing_stocks
+              existing['funds'] = existing_funds
+              # 2. 准备状态数据（定期任务使用：main_run_date + updates）
+              all_updated = list(updated_code_set | set(existing_funds.keys()))
+              existing_updates[skip_date] = ','.join(sorted(all_updated))
+              state['updated_count'] = len(existing_funds)
+              state['total_count'] = len(existing_funds)
+              state['updates'] = existing_updates
+              # 3. 先写所有临时文件
+              tmp_files = []
+              for fp, data in [(cache_file, existing), (state_file, state), (same_fund_file, same_fund_to_c)]:
+                  tmp = fp + '.tmp'
+                  with open(tmp, 'w', encoding='utf-8') as f:
+                      json.dump(data, f, ensure_ascii=False, separators=(',', ':'))
+                  tmp_files.append((tmp, fp))
+              # 4. 全部写入成功后，依次原子替换
+              for tmp, fp in tmp_files:
+                  os.replace(tmp, fp)
 
           print(f'Starting concurrent fetch: {len(funds_to_update)} funds, concurrency={CONCURRENCY}')
 
@@ -350,11 +455,11 @@ jobs:
                       break
 
                   batch = funds_to_update[i:i + CONCURRENCY]
-                  futures = {executor.submit(fetch_fund_data, fc, fn): (fc, fn) for fc, fn in batch}
+                  futures = {executor.submit(fetch_fund_data, fc, info): (fc, info) for fc, info in batch}
 
                   for future in as_completed(futures):
                       try:
-                          fc, fn, holdings = future.result()
+                          fc, info, holdings = future.result()
                       except Exception as e:
                           print(f'Error: {e}', file=sys.stderr)
                           failed_count += 1
@@ -364,17 +469,64 @@ jobs:
                           failed_count += 1
                           continue
 
-                      # 基金规模：优先用本次获取的，回退到缓存中的
-                      fund_size = fund_details.get(fc, {}).get('size', '')
+                      # 记录到已更新集合（含0-holdings，避免重复拉取）
+                      updated_code_set.add(fc)
+
+                      # 跳过无重仓股的基金（债券/货币基金等，不存入funds但记入updates）
+                      if not holdings or len(holdings) == 0:
+                          # 从funds中移除（如果之前存在）
+                          existing_funds.pop(fc, None)
+                          updated_count += 1
+                          pending_writes += 1
+                          continue
+
+                      # 基金规模：优先用 rankhandler 获取的，C类为空则回退A类
+                      fund_size = info.get('scale', '')
+                      if not fund_size:
+                          # C类scale为空时，回退到同名A类scale
+                          for a_code in c2a_map.get(fc, []):
+                              a_info = deduped_funds.get(a_code) or all_funds.get(a_code, {})
+                              a_scale = a_info.get('scale', '') if isinstance(a_info, dict) else ''
+                              if a_scale:
+                                  fund_size = a_scale
+                                  break
                       if not fund_size:
                           fund_size = existing_funds.get(fc, {}).get('s', '')
+                      # TODO 624: 校验规模，负数或非数字置空
+                      if fund_size:
+                          try:
+                              if float(fund_size) < 0:
+                                  fund_size = ''
+                          except (ValueError, TypeError):
+                              fund_size = ''
 
-                      existing_funds[fc] = {
-                          'n': fn,
-                          's': fund_size,
-                          'u': today_str,
-                          'h': holdings
-                      }
+                      # TODO 625: h用36进制编码字符串，funds用数组格式 [scale, h_str]
+                      # jjcc 返回 [[code, name, weight], ...] → "3位36进制序号3位36进制占比..." 字符串
+                      # 股票名查表得到序号（新增则追加到 stocks 数组），序号36进制3位
+                      # 占比×100转整数，36进制3位
+                      h_str = ''
+                      for item in holdings:
+                          if len(item) >= 3:
+                              stock_name = item[1]
+                              weight = item[2]
+                          elif len(item) == 2:
+                              stock_name = item[0]
+                              weight = item[1]
+                          else:
+                              continue
+                          if not stock_name:
+                              continue
+                          # 股票名查表（新增则追加）
+                          if stock_name not in stock_name_to_idx:
+                              stock_name_to_idx[stock_name] = len(existing_stocks)
+                              existing_stocks.append(stock_name)
+                          stock_idx = stock_name_to_idx[stock_name]
+                          # 占比×100转整数
+                          weight_int = int(round(weight * 100))
+                          h_str += to_base36(stock_idx, 3) + to_base36(weight_int, 3)
+
+                      # funds用数组格式 [scale, h_str]，省去 "s": 和 "h": key
+                      existing_funds[fc] = [fund_size, h_str]
                       updated_count += 1
                       pending_writes += 1
 
@@ -396,7 +548,8 @@ jobs:
           # ========== 6. 最终保存 ==========
           save_cache()
 
-          quarter_done = sum(1 for f in existing_funds.values() if f.get('u', '') >= skip_date)
+          # TODO 623: 断点续传统计改为使用 updated_code_set
+          quarter_done = len(updated_code_set)
           print(f'\\nDone: updated={updated_count}, failed={failed_count}, skipped={skipped_count}')
           print(f'Quarter progress: {quarter_done}/{total} funds updated ({quarter_done*100//total}%)')
           if time_limit_hit:
@@ -415,7 +568,7 @@ jobs:
         run: |
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git config user.name "github-actions[bot]"
-          git add data/fund-holdings-cache.json
+          git add data/fund-holdings-cache.json data/fund-holdings-cache-state.json data/same_fund_to_code_c.json
           if git diff --staged --quiet; then
             echo "No changes to commit"
           else
