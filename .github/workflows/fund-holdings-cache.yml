@@ -645,6 +645,7 @@ jobs:
           else
             today=$(TZ='Asia/Shanghai' date +%Y-%m-%d)
             git commit -m "chore: update fund holdings cache ${today}"
+            git pull --rebase origin main || echo "git pull failed, will attempt push anyway"
             git push
           fi
 

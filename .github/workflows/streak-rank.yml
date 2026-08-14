@@ -963,6 +963,7 @@ jobs:
           else
             today=$(date +%Y-%m-%d)
             git commit -m "chore: update streak rank and calibration ${today}"
+            git pull --rebase origin main || echo "git pull failed, will attempt push anyway"
             git push
           fi
 
@@ -979,6 +980,7 @@ jobs:
             echo "${TODAY}" > data/.keep-alive
             git add data/.keep-alive
             git commit -m "chore: keep alive ${TODAY}"
+            git pull --rebase origin main || echo "git pull failed, will attempt push anyway"
             git push
           else
             echo "Already have a commit today (${TODAY}), skipping keep-alive"

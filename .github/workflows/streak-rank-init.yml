@@ -306,6 +306,7 @@ jobs:
           else
             today=$(date +%Y-%m-%d)
             git commit -m "chore: init streak rank ${today}"
+            git pull --rebase origin main || echo "git pull failed, will attempt push anyway"
             git push
           fi
 
