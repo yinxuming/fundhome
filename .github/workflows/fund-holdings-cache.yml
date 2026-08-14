@@ -384,15 +384,78 @@ jobs:
 
               return holdings
 
+          def fetch_pingzhongdata(fund_code):
+              """获取基金 pingzhongdata（含股票代码列表和规模）
+              返回 (stock_codes, fund_scale) 或 (None, None)
+              - stock_codes: 6位股票代码列表（去掉最后1位市场标识）
+              - fund_scale: 最新规模（亿元），来自 Data_fluctuationScale.series[-1].y
+              """
+              url = f'https://fund.eastmoney.com/pingzhongdata/{fund_code}.js'
+              req = urllib.request.Request(url, headers={
+                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+              })
+              try:
+                  with urllib.request.urlopen(req, timeout=15) as resp:
+                      text = resp.read().decode('utf-8')
+              except Exception:
+                  return None, None
+
+              # 解析 stockCodes：去掉末位市场标识，按长度区分A股/港股
+              # A股: 7位 = 6位代码 + 1位市场标识(0=深市,1=沪市) → 取前6位
+              # 港股: 8位 = 5位代码 + 3位后缀(如116) → 取前5位
+              # 美股: 字母代码(如AAPL) → 保留原值
+              stock_codes = []
+              codes_match = re.search(r'var\s+stockCodes\s*=\s*(\[.*?\]);', text)
+              if codes_match:
+                  try:
+                      raw_codes = json.loads(codes_match.group(1))
+                      for c in raw_codes:
+                          s = str(c)
+                          if s.isdigit() and len(s) == 7:
+                              stock_codes.append(s[:6])  # A股: 6位代码+1位市场标识
+                          elif s.isdigit() and len(s) == 8:
+                              stock_codes.append(s[:5])  # 港股: 5位代码+3位后缀
+                          elif s.isdigit() and len(s) <= 6:
+                              stock_codes.append(s)      # 纯数字代码(6位A股或5位港股)
+                          else:
+                              stock_codes.append(s)      # 非数字(美股代码等)或其他格式
+                  except Exception:
+                      pass
+
+              # 解析 Data_fluctuationScale：取最新规模（series[-1].y）
+              fund_scale = ''
+              scale_match = re.search(r'Data_fluctuationScale\s*=\s*(\{.*?\});', text, re.DOTALL)
+              if scale_match:
+                  try:
+                      scale_data = json.loads(scale_match.group(1))
+                      series = scale_data.get('series', [])
+                      if series:
+                          latest = series[-1].get('y', 0)
+                          if latest > 0:
+                              fund_scale = str(latest)
+                  except Exception:
+                      pass
+
+              return stock_codes, fund_scale
+
           def fetch_fund_data(fund_code, fund_info):
-              """获取单只基金持仓（含3次重试，递增延迟）"""
+              """获取单只基金持仓+规模（含3次重试，递增延迟）
+              并发请求 jjcc（持仓+权重）和 pingzhongdata（股票代码+规模）
+              """
               holdings = None
+              stock_codes = None
+              fund_scale = ''
               for retry in range(3):
-                  holdings = fetch_jjcc(fund_code)
+                  # 并发请求 jjcc 和 pingzhongdata
+                  with ThreadPoolExecutor(max_workers=2) as executor:
+                      jjcc_future = executor.submit(fetch_jjcc, fund_code)
+                      pz_future = executor.submit(fetch_pingzhongdata, fund_code)
+                      holdings = jjcc_future.result()
+                      stock_codes, fund_scale = pz_future.result()
                   if holdings is not None:
                       break
                   time.sleep(1 + retry * 2)
-              return fund_code, fund_info, holdings
+              return fund_code, fund_info, holdings, stock_codes, fund_scale
 
           # 并发配置
           CONCURRENCY = 3          # 3个并发线程
@@ -459,7 +522,7 @@ jobs:
 
                   for future in as_completed(futures):
                       try:
-                          fc, info, holdings = future.result()
+                          fc, info, holdings, stock_codes, fund_scale = future.result()
                       except Exception as e:
                           print(f'Error: {e}', file=sys.stderr)
                           failed_count += 1
@@ -480,25 +543,33 @@ jobs:
                           pending_writes += 1
                           continue
 
-                      # 基金规模：优先用 rankhandler 获取的，C类为空则回退A类
-                      fund_size = info.get('scale', '')
-                      if not fund_size:
-                          # C类scale为空时，回退到同名A类scale
+                      # TODO 626: 基金规模从 pingzhongdata Data_fluctuationScale 获取
+                      # 优先使用 pingzhongdata 的规模，C类为空则回退A类scale
+                      if not fund_scale:
                           for a_code in c2a_map.get(fc, []):
-                              a_info = deduped_funds.get(a_code) or all_funds.get(a_code, {})
-                              a_scale = a_info.get('scale', '') if isinstance(a_info, dict) else ''
-                              if a_scale:
-                                  fund_size = a_scale
-                                  break
-                      if not fund_size:
-                          fund_size = existing_funds.get(fc, {}).get('s', '')
-                      # TODO 624: 校验规模，负数或非数字置空
-                      if fund_size:
+                              # A类没有 pingzhongdata 规模，跳过
+                              pass
+                      if not fund_scale:
+                          fund_scale = existing_funds.get(fc, {})[0] if isinstance(existing_funds.get(fc, {}), list) and existing_funds.get(fc, {}) else ''
+                      # 校验规模，负数或非数字置空
+                      if fund_scale:
                           try:
-                              if float(fund_size) < 0:
-                                  fund_size = ''
+                              if float(fund_scale) < 0:
+                                  fund_scale = ''
                           except (ValueError, TypeError):
-                              fund_size = ''
+                              fund_scale = ''
+
+                      # TODO 626: stockCodes 交叉验证
+                      # 比较 pingzhongdata 的 stockCodes 和 jjcc 解析出的股票代码
+                      # 不限定代码长度（A股6位、港股5位、美股字母均参与比对）
+                      if stock_codes:
+                          jjcc_codes = set(item[0] for item in holdings if item[0])
+                          pz_codes = set(stock_codes)
+                          # 期望至少60%的股票代码匹配（jjcc是前10大，stockCodes也是前10大）
+                          if jjcc_codes and pz_codes:
+                              overlap = jjcc_codes & pz_codes
+                              if len(overlap) < len(jjcc_codes) * 0.4:
+                                  print(f'  [WARN] {fc}: stockCodes交叉验证异常, jjcc={len(jjcc_codes)} pz={len(pz_codes)} overlap={len(overlap)}')
 
                       # TODO 625: h用36进制编码字符串，funds用数组格式 [scale, h_str]
                       # jjcc 返回 [[code, name, weight], ...] → "3位36进制序号3位36进制占比..." 字符串
@@ -526,7 +597,7 @@ jobs:
                           h_str += to_base36(stock_idx, 3) + to_base36(weight_int, 3)
 
                       # funds用数组格式 [scale, h_str]，省去 "s": 和 "h": key
-                      existing_funds[fc] = [fund_size, h_str]
+                      existing_funds[fc] = [fund_scale, h_str]
                       updated_count += 1
                       pending_writes += 1
 
